@@ -1,0 +1,1340 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
+import { onAuthStateChanged, User } from 'firebase/auth';
+import { auth, signInWithGoogle, logOut, db } from './firebase';
+import { 
+  collection, 
+  query, 
+  where, 
+  onSnapshot, 
+  addDoc, 
+  updateDoc, 
+  doc, 
+  deleteDoc, 
+  orderBy, 
+  Timestamp,
+  setDoc,
+  getDoc,
+  getDocs,
+  writeBatch
+} from 'firebase/firestore';
+import { 
+  Plus, 
+  LogOut, 
+  Layout, 
+  Search, 
+  Moon, 
+  Sun, 
+  MoreHorizontal, 
+  X, 
+  Clock, 
+  CheckSquare, 
+  Paperclip, 
+  MessageSquare, 
+  User as UserIcon,
+  ChevronLeft,
+  Settings,
+  PlusCircle,
+  Trello,
+  ArrowLeft,
+  Repeat,
+  AlertCircle,
+  Zap,
+  ArrowRightLeft
+} from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import { clsx, type ClassValue } from 'clsx';
+import { twMerge } from 'tailwind-merge';
+import { Board, List, Card, UserProfile } from './types';
+
+function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs));
+}
+
+const Logo = ({ className, dark = false }: { className?: string, dark?: boolean }) => (
+  <div className={cn("logo-versus", className)}>
+    <span className={cn("logo-versus-clinica", dark && "text-white/60")}>Clínica</span>
+    <span className={cn("logo-versus-main", dark && "text-white")}>versus</span>
+  </div>
+);
+
+export default function App() {
+  const [user, setUser] = useState<User | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [isAuthReady, setIsAuthReady] = useState(false);
+  const [isSigningIn, setIsSigningIn] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [boards, setBoards] = useState<Board[]>([]);
+  const [activeBoardId, setActiveBoardId] = useState<string | null>(null);
+  const [lists, setLists] = useState<List[]>([]);
+  const [cards, setCards] = useState<Card[]>([]);
+  const [isDarkMode, setIsDarkMode] = useState(false);
+  const [movingCardId, setMovingCardId] = useState<string | null>(null);
+  const [showNewBoardModal, setShowNewBoardModal] = useState(false);
+  const [creatingNewSector, setCreatingNewSector] = useState(false);
+  const [newSectorName, setNewSectorName] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [showLanding, setShowLanding] = useState(true);
+  const [addingCardToList, setAddingCardToList] = useState<string | null>(null);
+  const [newCardTitle, setNewCardTitle] = useState('');
+  const [newCardUrgency, setNewCardUrgency] = useState<'low' | 'medium' | 'high'>('low');
+  const [newCardIsRecurrent, setNewCardIsRecurrent] = useState(false);
+  const [addingList, setAddingList] = useState(false);
+  const [newListName, setNewListName] = useState('');
+  const [listMenuId, setListMenuId] = useState<string | null>(null);
+  const [listMenuPos, setListMenuPos] = useState<{ top: number, left: number } | null>(null);
+  const [editingListId, setEditingListId] = useState<string | null>(null);
+  const [editingListName, setEditingListName] = useState('');
+  const [listToDeleteId, setListToDeleteId] = useState<string | null>(null);
+  const isInitializingRef = React.useRef(false);
+  const hasCleanedUpRef = React.useRef(false);
+
+  // Auth Listener
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      setUser(currentUser);
+      if (currentUser) {
+        // Sync user profile to Firestore
+        const userRef = doc(db, 'users', currentUser.uid);
+        const userSnap = await getDoc(userRef);
+        
+        const isAdminEmail = currentUser.email === "elvisbatistadesouza32@gmail.com";
+        const role = userSnap.exists() ? (userSnap.data().role || (isAdminEmail ? 'admin' : 'user')) : (isAdminEmail ? 'admin' : 'user');
+        
+        setIsAdmin(role === 'admin');
+
+        await setDoc(userRef, {
+          name: currentUser.displayName || 'Anonymous',
+          email: currentUser.email || '',
+          photoUrl: currentUser.photoURL || '',
+          role: role
+        }, { merge: true });
+      } else {
+        setIsAdmin(false);
+      }
+      setIsAuthReady(true);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Initialize Sectors (Admin only)
+  useEffect(() => {
+    if (isAdmin && user && isAuthReady && boards.length > 0 && !isInitializingRef.current) {
+      const sectors = ['Comercial', 'Staff', 'Recepção', 'Enfermagem'];
+      const colors = [
+        'bg-gradient-to-br from-amber-500 to-orange-600',
+        'bg-gradient-to-br from-blue-500 to-indigo-600',
+        'bg-gradient-to-br from-emerald-500 to-teal-600',
+        'bg-gradient-to-br from-rose-500 to-pink-600'
+      ];
+
+      const missingSectors = sectors.filter(s => !boards.some(b => b.name === s));
+      
+      if (missingSectors.length > 0) {
+        isInitializingRef.current = true;
+        missingSectors.forEach(async (sector) => {
+          const index = sectors.indexOf(sector);
+          const boardRef = await addDoc(collection(db, 'boards'), {
+            name: sector,
+            ownerId: user.uid,
+            members: [user.uid],
+            background: colors[index],
+            createdAt: Timestamp.now()
+          });
+
+          // Add default lists
+          const defaultLists = ['A fazer', 'Em andamento', 'Concluído'];
+          for (let i = 0; i < defaultLists.length; i++) {
+            await addDoc(collection(db, `boards/${boardRef.id}/lists`), {
+              name: defaultLists[i],
+              boardId: boardRef.id,
+              order: i,
+              createdAt: Timestamp.now()
+            });
+          }
+        });
+      }
+    }
+  }, [isAdmin, user, boards, isAuthReady]);
+
+  // Cleanup Duplicates (Admin only)
+  useEffect(() => {
+    if (isAdmin && user && isAuthReady && boards.length > 1 && !hasCleanedUpRef.current) {
+      const cleanup = async () => {
+        const nameGroups: { [key: string]: Board[] } = {};
+        boards.forEach(b => {
+          if (!nameGroups[b.name]) nameGroups[b.name] = [];
+          nameGroups[b.name].push(b);
+        });
+
+        let cleaned = false;
+        for (const name in nameGroups) {
+          const group = nameGroups[name];
+          if (group.length > 1) {
+            cleaned = true;
+            // Sort by createdAt (oldest first)
+            group.sort((a, b) => a.createdAt.toMillis() - b.createdAt.toMillis());
+            const toKeep = group[0];
+            const toDelete = group.slice(1);
+
+            for (const board of toDelete) {
+              console.log(`Cleaning up duplicate board: ${board.name} (${board.id})`);
+              await deleteBoardWithContents(board.id);
+            }
+          }
+        }
+        if (cleaned) {
+          hasCleanedUpRef.current = true;
+        }
+      };
+      cleanup();
+    }
+  }, [isAdmin, user, boards, isAuthReady]);
+
+  const deleteBoardWithContents = async (boardId: string) => {
+    try {
+      // Delete cards
+      const cardsSnap = await getDocs(collection(db, `boards/${boardId}/cards`));
+      const listsSnap = await getDocs(collection(db, `boards/${boardId}/lists`));
+      
+      const batch = writeBatch(db);
+      cardsSnap.docs.forEach(d => batch.delete(d.ref));
+      listsSnap.docs.forEach(d => batch.delete(d.ref));
+      batch.delete(doc(db, 'boards', boardId));
+      
+      await batch.commit();
+    } catch (error) {
+      console.error('Error deleting board with contents:', error);
+    }
+  };
+
+  // Theme Listener
+  useEffect(() => {
+    if (isDarkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [isDarkMode]);
+
+  // Boards Listener
+  useEffect(() => {
+    if (!user || !isAuthReady) return;
+
+    // Admin sees all boards, regular users only see boards they are members of
+    const q = isAdmin 
+      ? query(collection(db, 'boards'), orderBy('createdAt', 'desc'))
+      : query(
+          collection(db, 'boards'),
+          where('members', 'array-contains', user.uid),
+          orderBy('createdAt', 'desc')
+        );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const boardsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Board));
+      setBoards(boardsData);
+    }, (error) => {
+      console.error('Firestore Error (Boards):', error);
+    });
+
+    return () => unsubscribe();
+  }, [user, isAuthReady]);
+
+  // Lists & Cards Listener
+  useEffect(() => {
+    if (!activeBoardId || !user) return;
+
+    const listsQ = query(
+      collection(db, `boards/${activeBoardId}/lists`),
+      orderBy('order', 'asc')
+    );
+
+    const cardsQ = query(
+      collection(db, `boards/${activeBoardId}/cards`),
+      orderBy('order', 'asc')
+    );
+
+    const unsubscribeLists = onSnapshot(listsQ, (snapshot) => {
+      setLists(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as List)));
+    });
+
+    const unsubscribeCards = onSnapshot(cardsQ, (snapshot) => {
+      setCards(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Card)));
+    });
+
+    return () => {
+      unsubscribeLists();
+      unsubscribeCards();
+      setMovingCardId(null);
+    };
+  }, [activeBoardId, user]);
+
+  const activeBoard = useMemo(() => boards.find(b => b.id === activeBoardId), [boards, activeBoardId]);
+
+  const moveCardToList = async (cardId: string, targetListId: string) => {
+    if (!activeBoardId) return;
+    
+    const draggedCard = cards.find(c => c.id === cardId);
+    if (!draggedCard) return;
+
+    const sourceListId = draggedCard.listId;
+    const otherCards = cards.filter(c => c.id !== cardId);
+    
+    // Destination list: add to end
+    const destListCards = otherCards
+      .filter(c => c.listId === targetListId)
+      .sort((a, b) => a.order - b.order);
+    
+    const updatedCard = { ...draggedCard, listId: targetListId, order: destListCards.length };
+    destListCards.push(updatedCard);
+    
+    // Source list: reorder to fill gap
+    const sourceListCards = otherCards
+      .filter(c => c.listId === sourceListId)
+      .sort((a, b) => a.order - b.order);
+    const updatedSourceCards = sourceListCards.map((c, i) => ({ ...c, order: i }));
+
+    const finalCards = cards.map(c => {
+      if (c.id === cardId) return updatedCard;
+      const inSource = updatedSourceCards.find(sc => sc.id === c.id);
+      if (inSource) return inSource;
+      return c;
+    });
+
+    setCards(finalCards);
+    setMovingCardId(null);
+
+    try {
+      const batch = writeBatch(db);
+      const cardRef = doc(db, `boards/${activeBoardId}/cards`, cardId);
+      batch.update(cardRef, { 
+        listId: targetListId,
+        order: updatedCard.order 
+      });
+      
+      updatedSourceCards.forEach(c => {
+        const cardRef = doc(db, `boards/${activeBoardId}/cards`, c.id);
+        batch.update(cardRef, { order: c.order });
+      });
+      
+      await batch.commit();
+    } catch (error) {
+      console.error("Error moving card:", error);
+    }
+  };
+
+  const createBoard = async (name: string) => {
+    if (!user) return;
+
+    // Prevent duplicate names
+    if (boards.some(b => b.name.toLowerCase() === name.toLowerCase())) {
+      alert('Já existe um setor com este nome.');
+      return;
+    }
+
+    const boardData = {
+      name,
+      ownerId: user.uid,
+      members: [user.uid],
+      background: 'bg-versus',
+      createdAt: Timestamp.now()
+    };
+    const docRef = await addDoc(collection(db, 'boards'), boardData);
+    setActiveBoardId(docRef.id);
+    setShowNewBoardModal(false);
+
+    // Add default lists
+    const defaultLists = ['A fazer', 'Em andamento', 'Concluído'];
+    for (let i = 0; i < defaultLists.length; i++) {
+      await addDoc(collection(db, `boards/${docRef.id}/lists`), {
+        name: defaultLists[i],
+        boardId: docRef.id,
+        order: i,
+        createdAt: Timestamp.now()
+      });
+    }
+  };
+
+  const addList = async (name: string) => {
+    if (!activeBoardId) return;
+    await addDoc(collection(db, `boards/${activeBoardId}/lists`), {
+      name,
+      boardId: activeBoardId,
+      order: lists.length,
+      createdAt: Timestamp.now()
+    });
+    setAddingList(false);
+    setNewListName('');
+  };
+
+  const renameList = async (listId: string, newName: string) => {
+    if (!activeBoardId || !newName.trim()) return;
+    try {
+      const listRef = doc(db, `boards/${activeBoardId}/lists`, listId);
+      await updateDoc(listRef, { name: newName });
+      setEditingListId(null);
+      setEditingListName('');
+    } catch (error) {
+      console.error("Error renaming list:", error);
+    }
+  };
+
+  const deleteList = async (listId: string) => {
+    if (!activeBoardId) return;
+    
+    try {
+      const batch = writeBatch(db);
+      
+      // Delete cards in the list
+      const cardsInList = cards.filter(c => c.listId === listId);
+      cardsInList.forEach(c => {
+        batch.delete(doc(db, `boards/${activeBoardId}/cards`, c.id));
+      });
+      
+      // Delete the list
+      batch.delete(doc(db, `boards/${activeBoardId}/lists`, listId));
+      
+      await batch.commit();
+      setListMenuId(null);
+      setListToDeleteId(null);
+    } catch (error) {
+      console.error("Error deleting list:", error);
+    }
+  };
+
+  const addCard = async (listId: string, title: string, urgency: 'low' | 'medium' | 'high' = 'low', isRecurrent: boolean = false) => {
+    if (!activeBoardId) return;
+    const listCards = cards.filter(c => c.listId === listId);
+    await addDoc(collection(db, `boards/${activeBoardId}/cards`), {
+      title,
+      description: '',
+      listId,
+      boardId: activeBoardId,
+      order: listCards.length,
+      labels: [],
+      members: [],
+      checklist: [],
+      urgency,
+      isRecurrent,
+      createdAt: Timestamp.now()
+    });
+    setAddingCardToList(null);
+    setNewCardTitle('');
+    setNewCardUrgency('low');
+    setNewCardIsRecurrent(false);
+  };
+
+  const handleSignIn = async () => {
+    if (isSigningIn) return;
+    
+    setIsSigningIn(true);
+    setAuthError(null);
+    
+    try {
+      await signInWithGoogle();
+    } catch (error: any) {
+      console.error('Error signing in with Google:', error);
+      
+      // Handle cancelled popup request gracefully
+      if (error.code === 'auth/cancelled-popup-request' || error.code === 'auth/popup-closed-by-user') {
+        // User closed the popup or cancelled, no need to show a scary error
+        return;
+      }
+      
+      setAuthError('Ocorreu um erro ao entrar com o Google. Por favor, tente novamente.');
+    } finally {
+      setIsSigningIn(false);
+    }
+  };
+
+  if (!isAuthReady) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-versus"></div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center p-6">
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-white dark:bg-slate-900 p-10 rounded-[2.5rem] shadow-2xl max-w-md w-full border border-slate-100 dark:border-slate-800 text-center"
+        >
+          <div className="mb-8">
+            <Logo className="scale-150" />
+          </div>
+          <h1 className="text-3xl font-bold text-slate-900 dark:text-white mb-4">Bem-vindo à Clínica Versus</h1>
+          <p className="text-slate-500 dark:text-slate-400 mb-8">Gerencie os processos da clínica com facilidade e colaboração em tempo real.</p>
+          
+          {authError && (
+            <div className="mb-6 p-4 bg-rose-50 dark:bg-rose-900/20 text-rose-600 dark:text-rose-400 text-sm rounded-xl border border-rose-100 dark:border-rose-800">
+              {authError}
+            </div>
+          )}
+
+          <button 
+            onClick={handleSignIn}
+            disabled={isSigningIn}
+            className={cn(
+              "w-full bg-versus hover:bg-versus/90 text-white font-bold py-4 px-6 rounded-2xl shadow-lg shadow-versus/20 transition-all active:scale-95 flex items-center justify-center gap-3",
+              isSigningIn && "opacity-70 cursor-not-allowed"
+            )}
+          >
+            {isSigningIn ? (
+              <div className="animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-white"></div>
+            ) : (
+              <>
+                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" className="w-6 h-6 bg-white rounded-full p-1" />
+                Entrar com Google
+              </>
+            )}
+          </button>
+        </motion.div>
+      </div>
+    );
+  }
+
+  if (user && showLanding) {
+    return (
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col transition-colors">
+        {/* Simple Header for Landing */}
+        <header className="h-16 flex items-center justify-between px-8 border-b border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-md sticky top-0 z-50">
+          <div className="flex items-center gap-2">
+            <Logo />
+          </div>
+          <div className="flex items-center gap-4">
+            <button onClick={() => setIsDarkMode(!isDarkMode)} className="text-slate-500 hover:text-slate-900 dark:hover:text-white p-2">
+              {isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+            </button>
+            <div className="flex items-center gap-3 pl-4 border-l border-slate-200 dark:border-slate-800">
+              <img src={user.photoURL || ''} alt={user.displayName || ''} className="w-8 h-8 rounded-full" />
+              <button onClick={logOut} className="text-slate-500 hover:text-rose-500 transition-colors">
+                <LogOut className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+        </header>
+
+        <main className="flex-1 flex flex-col items-center justify-center p-8 max-w-6xl mx-auto w-full">
+          <div className="grid lg:grid-cols-2 gap-16 items-center">
+            <motion.div 
+              initial={{ opacity: 0, x: -30 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 0.6 }}
+            >
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-versus/10 text-versus text-xs font-bold mb-6">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-versus opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-versus"></span>
+                </span>
+                SISTEMA INTERNO
+              </div>
+              <h1 className="text-5xl lg:text-7xl font-bold text-slate-900 dark:text-white leading-[1.1] mb-6 italic">
+                Excelência <br /> 
+                <span className="text-versus not-italic">em cada detalhe.</span>
+              </h1>
+              <p className="text-xl text-slate-500 dark:text-slate-400 mb-10 leading-relaxed max-w-lg">
+                Gerencie os atendimentos, processos e tarefas da Clínica Versus com a eficiência que seus pacientes merecem.
+              </p>
+              
+              <div className="flex flex-col sm:flex-row gap-4">
+                <button 
+                  onClick={() => setShowLanding(false)}
+                  className="bg-versus hover:bg-versus/90 text-white font-bold py-4 px-10 rounded-2xl shadow-xl shadow-versus/20 transition-all active:scale-95 flex items-center justify-center gap-2 text-lg"
+                >
+                  Acessar Processos
+                  <ChevronLeft className="w-5 h-5 rotate-180" />
+                </button>
+                {isAdmin && (
+                  <button 
+                    onClick={() => {
+                      setShowLanding(false);
+                      setShowNewBoardModal(true);
+                    }}
+                    className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 font-bold py-4 px-10 rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-all text-lg"
+                  >
+                    Criar Novo Setor
+                  </button>
+                )}
+              </div>
+            </motion.div>
+
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.8 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 0.8, delay: 0.2 }}
+              className="relative"
+            >
+              <div className="absolute -inset-4 bg-gradient-to-tr from-versus to-versus/40 rounded-[3rem] blur-3xl opacity-20 animate-pulse"></div>
+              <div className="relative bg-white dark:bg-slate-900 p-4 rounded-[2.5rem] shadow-2xl border border-slate-200 dark:border-slate-800">
+                <div className="flex gap-4 p-2">
+                  <div className="w-48 h-64 bg-slate-100 dark:bg-slate-800 rounded-2xl p-4 flex flex-col gap-3">
+                    <div className="h-4 w-2/3 bg-slate-200 dark:bg-slate-700 rounded-full"></div>
+                    <div className="h-20 bg-white dark:bg-slate-700 rounded-xl shadow-sm"></div>
+                    <div className="h-12 bg-white dark:bg-slate-700 rounded-xl shadow-sm"></div>
+                  </div>
+                  <div className="w-48 h-64 bg-slate-100 dark:bg-slate-800 rounded-2xl p-4 flex flex-col gap-3">
+                    <div className="h-4 w-1/2 bg-slate-200 dark:bg-slate-700 rounded-full"></div>
+                    <div className="h-16 bg-versus/10 border border-versus/20 rounded-xl"></div>
+                    <div className="h-24 bg-white dark:bg-slate-700 rounded-xl shadow-sm"></div>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        </main>
+
+        <footer className="p-8 text-center text-slate-400 text-sm border-t border-slate-200 dark:border-slate-800">
+          &copy; 2026 Clínica Versus. Todos os direitos reservados.
+        </footer>
+      </div>
+    );
+  }
+
+  if (!activeBoardId && boards.length > 0) {
+    return (
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center p-6">
+        <div className="max-w-2xl w-full">
+          <div className="flex items-center gap-4 mb-8">
+            <button 
+              onClick={() => setShowLanding(true)}
+              className="p-2 rounded-full hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-500 transition-all"
+            >
+              <ArrowLeft className="w-6 h-6" />
+            </button>
+            <h1 className="text-3xl font-bold text-slate-900 dark:text-white">Seus Processos</h1>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+            {boards.map(board => (
+              <button 
+                key={board.id}
+                onClick={() => setActiveBoardId(board.id)}
+                className={cn(
+                  "h-32 rounded-2xl p-4 text-left flex flex-col justify-between transition-all hover:scale-105 shadow-lg",
+                  board.background
+                )}
+              >
+                <span className="text-white font-bold text-lg">{board.name}</span>
+                <div className="flex items-center justify-between">
+                  <span className="text-white/60 text-xs">{board.members.length} membros</span>
+                  <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
+                    <ChevronLeft className="w-4 h-4 text-white rotate-180" />
+                  </div>
+                </div>
+              </button>
+            ))}
+            {isAdmin && (
+              <button 
+                onClick={() => setShowNewBoardModal(true)}
+                className="h-32 rounded-2xl border-2 border-dashed border-slate-200 dark:border-slate-800 flex flex-col items-center justify-center gap-2 text-slate-400 hover:border-versus hover:text-versus transition-all"
+              >
+                <PlusCircle className="w-8 h-8" />
+                <span className="font-bold">Novo Setor</span>
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!activeBoardId) {
+    return (
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center p-6">
+        <button 
+          onClick={() => setShowLanding(true)}
+          className="absolute top-8 left-8 p-3 rounded-full bg-white dark:bg-slate-900 shadow-md text-slate-500 hover:text-versus transition-all"
+        >
+          <ArrowLeft className="w-6 h-6" />
+        </button>
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="text-center"
+        >
+          <div className="w-20 h-20 bg-slate-200 dark:bg-slate-800 rounded-3xl flex items-center justify-center mx-auto mb-6">
+            <Layout className="text-slate-400 w-10 h-10" />
+          </div>
+          <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">Nenhum quadro encontrado</h2>
+          <p className="text-slate-500 dark:text-slate-400 mb-8 text-sm">Comece criando seu primeiro projeto para gerenciar suas tarefas.</p>
+          {isAdmin && (
+            <button 
+              onClick={() => setShowNewBoardModal(true)}
+              className="bg-versus hover:bg-versus/90 text-white font-bold py-3 px-8 rounded-xl shadow-lg shadow-versus/20 transition-all active:scale-95"
+            >
+              Criar Novo Setor
+            </button>
+          )}
+        </motion.div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={cn("min-h-screen flex flex-col transition-colors", activeBoard?.background || 'bg-slate-50 dark:bg-slate-950')}>
+      {/* Header */}
+      <header className="bg-black/20 backdrop-blur-md border-b border-white/10 h-14 flex items-center justify-between px-4 shrink-0">
+        <div className="flex items-center gap-4">
+          <button 
+            onClick={() => setShowLanding(true)}
+            className="hover:opacity-80 transition-opacity"
+          >
+            <Logo dark className="scale-75 origin-left" />
+          </button>
+          
+          <div className="h-6 w-[1px] bg-white/20 mx-2"></div>
+          
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={() => setShowLanding(true)}
+              className="bg-white/20 hover:bg-white/30 text-white px-3 py-1.5 rounded-md text-sm font-medium transition-colors flex items-center gap-2"
+            >
+              <Layout className="w-4 h-4" />
+              <span className="hidden md:inline">Início</span>
+            </button>
+            {isAdmin && (
+              <button 
+                onClick={() => {
+                  setActiveBoardId(null);
+                  setShowLanding(false);
+                  setShowNewBoardModal(true);
+                }}
+                className="bg-white/20 hover:bg-white/30 text-white px-3 py-1.5 rounded-md text-sm font-medium transition-colors flex items-center gap-2"
+              >
+                <PlusCircle className="w-4 h-4" />
+                <span className="hidden md:inline">Novo Setor</span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-4">
+          <div className="relative group hidden md:block">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/60" />
+            <input 
+              type="text" 
+              placeholder="Pesquisar..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="bg-white/20 hover:bg-white/30 focus:bg-white text-white focus:text-slate-900 pl-10 pr-4 py-1.5 rounded-md text-sm outline-none transition-all w-48 focus:w-64"
+            />
+          </div>
+
+          <button onClick={() => setIsDarkMode(!isDarkMode)} className="text-white/80 hover:text-white p-2">
+            {isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+          </button>
+
+          <div className="flex items-center gap-3">
+            <img src={user.photoURL || ''} alt={user.displayName || ''} className="w-8 h-8 rounded-full border border-white/20" />
+            <button onClick={logOut} className="text-white/80 hover:text-white p-2">
+              <LogOut className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+      </header>
+
+      {/* Board Subheader */}
+      <div className="bg-black/10 backdrop-blur-sm h-12 flex items-center justify-between px-6 shrink-0">
+        <div className="flex items-center gap-4">
+          <button 
+            onClick={() => setActiveBoardId(null)}
+            className="text-white/80 hover:text-white flex items-center gap-1.5 bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg text-sm transition-all"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            <span>Voltar</span>
+          </button>
+          <div className="h-4 w-[1px] bg-white/20 mx-1"></div>
+          <h2 className="text-white font-bold text-lg">{activeBoard?.name || 'Selecione um Setor'}</h2>
+          <button className="text-white/60 hover:text-white p-1.5 rounded-md hover:bg-white/10">
+            <Settings className="w-4 h-4" />
+          </button>
+        </div>
+        
+        <div className="flex items-center gap-2">
+          <div className="flex -space-x-2">
+            {activeBoard?.members.slice(0, 3).map((uid, i) => (
+              <div key={uid} className="w-8 h-8 rounded-full bg-slate-200 border-2 border-slate-900 flex items-center justify-center text-[10px] font-bold">
+                {uid.slice(0, 2).toUpperCase()}
+              </div>
+            ))}
+            {activeBoard?.members.length && activeBoard.members.length > 3 && (
+              <div className="w-8 h-8 rounded-full bg-slate-800 border-2 border-slate-900 flex items-center justify-center text-[10px] text-white font-bold">
+                +{activeBoard.members.length - 3}
+              </div>
+            )}
+          </div>
+          <button className="bg-white/20 hover:bg-white/30 text-white px-3 py-1.5 rounded-md text-xs font-bold transition-colors">
+            Convidar
+          </button>
+        </div>
+      </div>
+
+      {/* Kanban Area */}
+      <main className="flex-1 overflow-x-auto overflow-y-hidden p-6 custom-scrollbar">
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={activeBoardId}
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -20 }}
+            transition={{ duration: 0.3, ease: "easeOut" }}
+            className="h-full"
+          >
+            <div className="flex gap-4 h-full items-start">
+              {lists.map((list) => (
+                <div
+                  key={list.id}
+                  className="w-72 bg-slate-100/90 dark:bg-slate-900/90 backdrop-blur-md rounded-2xl flex flex-col max-h-full shrink-0 shadow-lg border border-white/20 dark:border-slate-800/50 transition-all duration-300"
+                >
+                  <div className="p-4 flex items-center justify-between group">
+                    {editingListId === list.id ? (
+                      <div className="flex-1 flex items-center gap-2">
+                        <input
+                          autoFocus
+                          type="text"
+                          value={editingListName}
+                          onChange={(e) => setEditingListName(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') renameList(list.id, editingListName);
+                            if (e.key === 'Escape') setEditingListId(null);
+                          }}
+                          onBlur={() => renameList(list.id, editingListName)}
+                          className="w-full bg-white dark:bg-slate-800 border-none rounded-md p-1 text-sm font-bold outline-none ring-2 ring-blue-500"
+                        />
+                      </div>
+                    ) : (
+                      <>
+                        <h3 className="font-bold text-slate-700 dark:text-slate-200 text-sm px-2 flex items-center gap-2">
+                          {list.name}
+                          <span className="text-[10px] bg-slate-200 dark:bg-slate-800 px-1.5 py-0.5 rounded-full text-slate-500 font-medium">
+                            {cards.filter(c => c.listId === list.id).length}
+                          </span>
+                        </h3>
+                        <button 
+                          onClick={(e) => {
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            setListMenuPos({ top: rect.top + rect.height, left: rect.left });
+                            setListMenuId(list.id);
+                          }}
+                          className="p-1 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-md transition-colors"
+                        >
+                          <MoreHorizontal className="w-4 h-4 text-slate-400 group-hover:text-slate-600 transition-colors" />
+                        </button>
+                      </>
+                    )}
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto px-2 pb-2 custom-scrollbar min-h-[50px]">
+                    {cards
+                      .filter(c => c.listId === list.id)
+                      .sort((a, b) => a.order - b.order)
+                      .map((card) => (
+                        <div
+                          key={card.id}
+                          onClick={() => setMovingCardId(card.id)}
+                          className="bg-white dark:bg-slate-800 p-3 rounded-xl shadow-sm mb-2 border border-slate-200 dark:border-slate-700 hover:border-blue-500 group select-none relative hover:shadow-md transition-all duration-200 cursor-pointer"
+                        >
+                          {card.labels.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mb-2">
+                              {card.labels.map(label => (
+                                <div key={label.id} className={cn("h-1.5 w-8 rounded-full", label.color)}></div>
+                              ))}
+                            </div>
+                          )}
+                          {card.urgency && card.urgency !== 'low' && (
+                            <div className={cn(
+                              "h-1 w-12 rounded-full mb-2",
+                              card.urgency === 'high' ? "bg-rose-500" : "bg-amber-500"
+                            )}></div>
+                          )}
+                          <div className="flex items-center justify-between mb-2">
+                            <h4 className="text-sm font-medium text-slate-900 dark:text-white">{card.title}</h4>
+                            <div className="flex items-center gap-1.5">
+                              <div
+                                className="p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-md text-slate-400 group-hover:text-blue-500 transition-colors"
+                                title="Mover tarefa"
+                              >
+                                <ArrowRightLeft className="w-3.5 h-3.5" />
+                              </div>
+                              {card.isRecurrent && (
+                                <Repeat className="w-3 h-3 text-blue-500" />
+                              )}
+                              {card.urgency === 'high' && (
+                                <Zap className="w-3 h-3 text-rose-500 fill-rose-500" />
+                              )}
+                              {card.urgency === 'medium' && (
+                                <Zap className="w-3 h-3 text-amber-500 fill-amber-500" />
+                              )}
+                            </div>
+                          </div>
+                          
+                          <div className="flex items-center gap-3 text-slate-400">
+                            {card.description && <div className="flex items-center gap-1"><MoreHorizontal className="w-3 h-3" /></div>}
+                            {card.checklist.length > 0 && (
+                              <div className="flex items-center gap-1 text-[10px] font-bold">
+                                <CheckSquare className="w-3 h-3" />
+                                {card.checklist.filter(i => i.completed).length}/{card.checklist.length}
+                              </div>
+                            )}
+                            {card.dueDate && (
+                              <div className="flex items-center gap-1 text-[10px] font-bold text-rose-500">
+                                <Clock className="w-3 h-3" />
+                                {card.dueDate.toDate().toLocaleDateString()}
+                              </div>
+                            )}
+                            {card.isRecurrent && (
+                              <div className="flex items-center gap-1 text-[10px] font-bold text-blue-500">
+                                <Repeat className="w-3 h-3" />
+                                Recorrente
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+
+                  <div className="p-2">
+                    {addingCardToList === list.id ? (
+                      <div className="bg-white dark:bg-slate-800 p-3 rounded-xl shadow-lg border border-slate-200 dark:border-slate-700 space-y-3">
+                        <input
+                          autoFocus
+                          type="text"
+                          placeholder="Título da tarefa..."
+                          value={newCardTitle}
+                          onChange={(e) => setNewCardTitle(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && newCardTitle) {
+                              addCard(list.id, newCardTitle, newCardUrgency, newCardIsRecurrent);
+                            } else if (e.key === 'Escape') {
+                              setAddingCardToList(null);
+                            }
+                          }}
+                          className="w-full bg-slate-50 dark:bg-slate-900 border-none rounded-lg p-2 text-sm outline-none focus:ring-2 focus:ring-versus/50"
+                        />
+                        
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => setNewCardUrgency('low')}
+                              className={cn(
+                                "px-2 py-1 rounded text-[10px] font-bold transition-all",
+                                newCardUrgency === 'low' ? "bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300" : "text-slate-400 hover:text-slate-600"
+                              )}
+                            >
+                              Baixa
+                            </button>
+                            <button
+                              onClick={() => setNewCardUrgency('medium')}
+                              className={cn(
+                                "px-2 py-1 rounded text-[10px] font-bold transition-all",
+                                newCardUrgency === 'medium' ? "bg-amber-100 text-amber-700" : "text-slate-400 hover:text-slate-600"
+                              )}
+                            >
+                              Média
+                            </button>
+                            <button
+                              onClick={() => setNewCardUrgency('high')}
+                              className={cn(
+                                "px-2 py-1 rounded text-[10px] font-bold transition-all",
+                                newCardUrgency === 'high' ? "bg-rose-100 text-rose-700" : "text-slate-400 hover:text-slate-600"
+                              )}
+                            >
+                              Alta
+                            </button>
+                          </div>
+
+                          <button
+                            onClick={() => setNewCardIsRecurrent(!newCardIsRecurrent)}
+                            className={cn(
+                              "p-1.5 rounded-lg transition-all flex items-center gap-1 text-[10px] font-bold",
+                              newCardIsRecurrent ? "bg-blue-100 text-blue-700" : "text-slate-400 hover:text-slate-600"
+                            )}
+                            title="Tarefa Recorrente"
+                          >
+                            <Repeat className="w-3 h-3" />
+                            {newCardIsRecurrent && <span>Recorrente</span>}
+                          </button>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => {
+                              if (newCardTitle) addCard(list.id, newCardTitle, newCardUrgency, newCardIsRecurrent);
+                            }}
+                            className="flex-1 bg-versus text-white py-1.5 rounded-lg text-xs font-bold shadow-lg shadow-versus/20"
+                          >
+                            Adicionar
+                          </button>
+                          <button
+                            onClick={() => setAddingCardToList(null)}
+                            className="p-1.5 text-slate-400 hover:text-slate-600"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button 
+                        onClick={() => setAddingCardToList(list.id)}
+                        className="w-full flex items-center gap-2 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 p-2 rounded-lg text-sm font-medium transition-colors"
+                      >
+                        <Plus className="w-4 h-4" />
+                        Adicionar um cartão
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+
+              {addingList ? (
+                <div className="w-72 bg-white dark:bg-slate-800 p-3 rounded-xl shadow-lg border border-slate-200 dark:border-slate-700 space-y-3 shrink-0">
+                  <input
+                    autoFocus
+                    type="text"
+                    placeholder="Nome da lista..."
+                    value={newListName}
+                    onChange={(e) => setNewListName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && newListName) {
+                        addList(newListName);
+                      } else if (e.key === 'Escape') {
+                        setAddingList(false);
+                      }
+                    }}
+                    className="w-full bg-slate-50 dark:bg-slate-900 border-none rounded-lg p-2 text-sm outline-none focus:ring-2 focus:ring-versus/50"
+                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        if (newListName) addList(newListName);
+                      }}
+                      className="flex-1 bg-versus text-white py-1.5 rounded-lg text-xs font-bold shadow-lg shadow-versus/20"
+                    >
+                      Adicionar Lista
+                    </button>
+                    <button
+                      onClick={() => setAddingList(false)}
+                      className="p-1.5 text-slate-400 hover:text-slate-600"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button 
+                  onClick={() => setAddingList(true)}
+                  className="w-72 bg-white/20 hover:bg-white/30 backdrop-blur-md text-white p-3 rounded-xl flex items-center gap-2 shrink-0 font-bold transition-colors"
+                >
+                  <Plus className="w-5 h-5" />
+                  Adicionar outra lista
+                </button>
+              )}
+            </div>
+          </motion.div>
+        </AnimatePresence>
+      </main>
+
+      {/* New Board Modal */}
+      <AnimatePresence>
+        {showNewBoardModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowNewBoardModal(false)}
+              className="absolute inset-0 bg-slate-950/60 backdrop-blur-md"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 40 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 40 }}
+              className="bg-white dark:bg-slate-900 rounded-[2.5rem] shadow-2xl w-full max-w-md relative z-10 overflow-hidden border border-white dark:border-slate-800"
+            >
+              <div className="p-8 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                <h3 className="text-2xl font-bold text-slate-900 dark:text-white">Seus Setores</h3>
+                <button onClick={() => setShowNewBoardModal(false)} className="text-slate-400 hover:text-rose-500">
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+              
+              <div className="p-8 space-y-6">
+                <div className="grid grid-cols-2 gap-4">
+                  {boards.map(board => (
+                    <button 
+                      key={board.id}
+                      onClick={() => {
+                        setActiveBoardId(board.id);
+                        setShowNewBoardModal(false);
+                      }}
+                      className={cn(
+                        "h-24 rounded-xl p-3 text-left flex flex-col justify-between transition-all hover:scale-105",
+                        board.background,
+                        activeBoardId === board.id ? "ring-4 ring-blue-500 ring-offset-2 dark:ring-offset-slate-900" : ""
+                      )}
+                    >
+                      <span className="text-white font-bold text-sm">{board.name}</span>
+                      <div className="flex -space-x-1">
+                        {board.members.slice(0, 2).map(m => (
+                          <div key={m} className="w-4 h-4 rounded-full bg-white/20 border border-white/40"></div>
+                        ))}
+                      </div>
+                    </button>
+                  ))}
+                  {creatingNewSector ? (
+                    <div className="h-24 rounded-xl border-2 border-versus p-3 flex flex-col gap-2 bg-slate-50 dark:bg-slate-800/50">
+                      <input
+                        autoFocus
+                        type="text"
+                        placeholder="Nome do setor..."
+                        value={newSectorName}
+                        onChange={(e) => setNewSectorName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && newSectorName) {
+                            createBoard(newSectorName);
+                            setNewSectorName('');
+                            setCreatingNewSector(false);
+                          } else if (e.key === 'Escape') {
+                            setCreatingNewSector(false);
+                          }
+                        }}
+                        className="w-full bg-transparent border-none p-0 text-sm font-bold outline-none text-slate-900 dark:text-white"
+                      />
+                      <div className="flex items-center gap-2 mt-auto">
+                        <button 
+                          onClick={() => {
+                            if (newSectorName) {
+                              createBoard(newSectorName);
+                              setNewSectorName('');
+                              setCreatingNewSector(false);
+                            }
+                          }}
+                          className="flex-1 bg-versus text-white py-1 rounded text-[10px] font-bold"
+                        >
+                          Criar
+                        </button>
+                        <button 
+                          onClick={() => setCreatingNewSector(false)}
+                          className="p-1 text-slate-400 hover:text-rose-500"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    isAdmin && (
+                      <button 
+                        onClick={() => setCreatingNewSector(true)}
+                        className="h-24 rounded-xl border-2 border-dashed border-slate-200 dark:border-slate-800 flex flex-col items-center justify-center gap-2 text-slate-400 hover:border-versus hover:text-versus transition-all"
+                      >
+                        <PlusCircle className="w-6 h-6" />
+                        <span className="text-xs font-bold">Novo Setor</span>
+                      </button>
+                    )
+                  )}
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <style>{`
+        .custom-scrollbar::-webkit-scrollbar {
+          width: 6px;
+          height: 6px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+          background: rgba(255, 255, 255, 0.2);
+          border-radius: 10px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+          background: rgba(255, 255, 255, 0.4);
+        }
+        .dark .custom-scrollbar::-webkit-scrollbar-thumb {
+          background: rgba(255, 255, 255, 0.1);
+        }
+      `}</style>
+      {/* List Menu Portal */}
+      <AnimatePresence>
+        {listMenuId && listMenuPos && createPortal(
+          <>
+            <div 
+              className="fixed inset-0 z-[100]" 
+              onClick={() => {
+                setListMenuId(null);
+                setListMenuPos(null);
+              }}
+            ></div>
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: -10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: -10 }}
+              style={{
+                position: 'fixed',
+                top: listMenuPos.top + 8,
+                left: listMenuPos.left,
+                zIndex: 101
+              }}
+              className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 overflow-hidden w-48"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="p-2 space-y-1">
+                <button
+                  onClick={() => {
+                    const list = lists.find(l => l.id === listMenuId);
+                    if (list) {
+                      setEditingListId(list.id);
+                      setEditingListName(list.name);
+                    }
+                    setListMenuId(null);
+                  }}
+                  className="w-full text-left px-3 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-lg transition-colors flex items-center gap-2"
+                >
+                  <Repeat className="w-4 h-4" />
+                  <span>Renomear</span>
+                </button>
+                <button
+                  onClick={() => setListToDeleteId(listMenuId)}
+                  className="w-full text-left px-3 py-2 text-sm text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-lg transition-colors flex items-center gap-2"
+                >
+                  <X className="w-4 h-4" />
+                  <span>Excluir Lista</span>
+                </button>
+              </div>
+            </motion.div>
+          </>,
+          document.body
+        )}
+      </AnimatePresence>
+
+      {/* Delete List Confirmation Modal */}
+      <AnimatePresence>
+        {listToDeleteId && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-6">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setListToDeleteId(null)}
+              className="absolute inset-0 bg-slate-950/60 backdrop-blur-md"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white dark:bg-slate-900 rounded-[2rem] shadow-2xl border border-white dark:border-slate-800 overflow-hidden w-full max-w-sm relative z-10 p-8 text-center"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="w-16 h-16 bg-rose-50 dark:bg-rose-900/30 rounded-2xl flex items-center justify-center mx-auto mb-6 text-rose-600 dark:text-rose-400">
+                <AlertCircle className="w-8 h-8" />
+              </div>
+              <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2">Excluir Lista?</h3>
+              <p className="text-slate-500 dark:text-slate-400 mb-8 text-sm">
+                Esta ação excluirá permanentemente a lista <strong>{lists.find(l => l.id === listToDeleteId)?.name}</strong> e todos os cartões dentro dela.
+              </p>
+              <div className="flex flex-col gap-3">
+                <button
+                  onClick={() => deleteList(listToDeleteId)}
+                  className="w-full bg-rose-500 hover:bg-rose-600 text-white font-bold py-3 rounded-xl transition-all shadow-lg shadow-rose-500/20"
+                >
+                  Sim, Excluir
+                </button>
+                <button
+                  onClick={() => setListToDeleteId(null)}
+                  className="w-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold py-3 rounded-xl transition-all"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Global Move Menu Modal */}
+      <AnimatePresence>
+        {movingCardId && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setMovingCardId(null)}
+              className="absolute inset-0 bg-slate-950/60 backdrop-blur-md"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white dark:bg-slate-900 rounded-[2rem] shadow-2xl border border-white dark:border-slate-800 overflow-hidden w-full max-w-sm relative z-10"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-blue-50 dark:bg-blue-900/30 rounded-xl text-blue-600 dark:text-blue-400">
+                    <ArrowRightLeft className="w-5 h-5" />
+                  </div>
+                  <h3 className="text-xl font-bold text-slate-900 dark:text-white">Mover Tarefa</h3>
+                </div>
+                <button 
+                  onClick={() => setMovingCardId(null)}
+                  className="p-2 text-slate-400 hover:text-rose-500 transition-colors"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+              
+              <div className="p-4 space-y-2 max-h-[60vh] overflow-y-auto custom-scrollbar">
+                <p className="text-sm text-slate-500 dark:text-slate-400 px-2 mb-4">
+                  Selecione a etapa para onde deseja transferir esta tarefa:
+                </p>
+                {lists.map(targetList => {
+                  const cardToMove = cards.find(c => c.id === movingCardId);
+                  const isCurrentList = targetList.id === cardToMove?.listId;
+                  
+                  return (
+                    <button
+                      key={targetList.id}
+                      disabled={isCurrentList}
+                      onClick={() => moveCardToList(movingCardId, targetList.id)}
+                      className={cn(
+                        "w-full text-left px-4 py-4 rounded-2xl transition-all flex items-center justify-between group",
+                        isCurrentList 
+                          ? "bg-slate-50 dark:bg-slate-800/50 text-slate-400 dark:text-slate-600 cursor-default" 
+                          : "text-slate-700 dark:text-slate-200 hover:bg-blue-50 dark:hover:bg-blue-900/20 hover:text-blue-600 dark:hover:text-blue-400 border border-transparent hover:border-blue-100 dark:hover:border-blue-900/50"
+                      )}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className={cn(
+                          "w-2 h-2 rounded-full",
+                          isCurrentList ? "bg-slate-300 dark:bg-slate-700" : "bg-blue-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                        )} />
+                        <span className="font-bold">{targetList.name}</span>
+                      </div>
+                      {isCurrentList && (
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Atual</span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+              
+              <div className="p-6 bg-slate-50 dark:bg-slate-800/50 text-center">
+                <p className="text-xs text-slate-400">
+                  Clique fora para cancelar a movimentação.
+                </p>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}

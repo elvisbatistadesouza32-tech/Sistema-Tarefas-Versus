@@ -1,0 +1,51 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && 
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+         (request.auth.token.email == "elvisbatistadesouza32@gmail.com" && request.auth.token.email_verified == true));
+    }
+    
+    function isBoardMember(boardId) {
+      return isAuthenticated() && 
+        (isAdmin() || request.auth.uid in get(/databases/$(database)/documents/boards/$(boardId)).data.members);
+    }
+
+    // Boards
+    match /boards/{boardId} {
+      allow read: if isAuthenticated() && (isAdmin() || request.auth.uid in resource.data.members);
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+      
+      // Lists
+      match /lists/{listId} {
+        allow read: if isBoardMember(boardId);
+        allow write: if isAdmin();
+      }
+      
+      // Cards
+      match /cards/{cardId} {
+        allow read: if isBoardMember(boardId);
+        allow write: if isAdmin();
+      }
+    }
+
+    // Users
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow write: if isOwner(userId);
+    }
+  }
+}

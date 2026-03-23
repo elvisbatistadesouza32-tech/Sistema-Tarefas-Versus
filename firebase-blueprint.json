@@ -1,0 +1,76 @@
+{
+  "entities": {
+    "Board": {
+      "title": "Board",
+      "description": "A project board containing lists and cards",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "The name of the board" },
+        "ownerId": { "type": "string", "description": "The UID of the user who created the board" },
+        "members": { "type": "array", "items": { "type": "string" }, "description": "List of user UIDs with access to the board" },
+        "background": { "type": "string", "description": "Background color or image URL" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Timestamp of creation" }
+      },
+      "required": ["name", "ownerId", "members", "createdAt"]
+    },
+    "List": {
+      "title": "List",
+      "description": "A column within a board",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "The name of the list" },
+        "boardId": { "type": "string", "description": "The ID of the board this list belongs to" },
+        "order": { "type": "number", "description": "The display order of the list" }
+      },
+      "required": ["name", "boardId", "order"]
+    },
+    "Card": {
+      "title": "Card",
+      "description": "A task card within a list",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "description": "The title of the card" },
+        "description": { "type": "string", "description": "The detailed description of the task" },
+        "listId": { "type": "string", "description": "The ID of the list this card belongs to" },
+        "boardId": { "type": "string", "description": "The ID of the board this card belongs to" },
+        "order": { "type": "number", "description": "The display order of the card within the list" },
+        "dueDate": { "type": "string", "format": "date-time", "description": "Optional due date" },
+        "labels": { "type": "array", "items": { "type": "object" }, "description": "Labels with colors and text" },
+        "members": { "type": "array", "items": { "type": "string" }, "description": "List of user UIDs assigned to this card" },
+        "checklist": { "type": "array", "items": { "type": "object" }, "description": "Subtasks" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Timestamp of creation" }
+      },
+      "required": ["title", "listId", "boardId", "order", "createdAt"]
+    },
+    "User": {
+      "title": "User",
+      "description": "Application user profile",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "The user's display name" },
+        "email": { "type": "string", "description": "The user's email address" },
+        "photoUrl": { "type": "string", "description": "The user's profile photo URL" },
+        "role": { "type": "string", "enum": ["admin", "user"], "description": "The user's role" }
+      },
+      "required": ["name", "email", "role"]
+    }
+  },
+  "firestore": {
+    "/boards/{boardId}": {
+      "schema": "Board",
+      "description": "Project boards"
+    },
+    "/boards/{boardId}/lists/{listId}": {
+      "schema": "List",
+      "description": "Lists within a board"
+    },
+    "/boards/{boardId}/cards/{cardId}": {
+      "schema": "Card",
+      "description": "Cards within a board"
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles"
+    }
+  }
+}
