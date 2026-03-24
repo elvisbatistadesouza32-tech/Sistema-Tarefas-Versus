@@ -1,7 +1,14 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { auth, signInWithGoogle, logOut, db } from './firebase';
+import { 
+  auth, 
+  logOut, 
+  db, 
+  createUserWithEmailAndPassword, 
+  signInWithEmailAndPassword, 
+  updateProfile 
+} from './firebase';
 import { 
   collection, 
   query, 
@@ -75,6 +82,10 @@ export default function App() {
   const [newSectorName, setNewSectorName] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [showLanding, setShowLanding] = useState(true);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [name, setName] = useState('');
+  const [isRegistering, setIsRegistering] = useState(false);
   const [addingCardToList, setAddingCardToList] = useState<string | null>(null);
   const [newCardTitle, setNewCardTitle] = useState('');
   const [newCardUrgency, setNewCardUrgency] = useState<'low' | 'medium' | 'high'>('low');
@@ -424,24 +435,65 @@ export default function App() {
     setNewCardIsRecurrent(false);
   };
 
-  const handleSignIn = async () => {
+  const handleSignIn = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     if (isSigningIn) return;
     
+    if (!email || !password) {
+      setAuthError('Por favor, preencha todos os campos.');
+      return;
+    }
+
     setIsSigningIn(true);
     setAuthError(null);
     
     try {
-      await signInWithGoogle();
+      await signInWithEmailAndPassword(auth, email, password);
     } catch (error: any) {
-      console.error('Error signing in with Google:', error);
-      
-      // Handle cancelled popup request gracefully
-      if (error.code === 'auth/cancelled-popup-request' || error.code === 'auth/popup-closed-by-user') {
-        // User closed the popup or cancelled, no need to show a scary error
-        return;
+      console.error('Error signing in:', error);
+      if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
+        setAuthError('Email ou senha incorretos.');
+      } else {
+        setAuthError('Ocorreu um erro ao entrar. Por favor, tente novamente.');
       }
-      
-      setAuthError('Ocorreu um erro ao entrar com o Google. Por favor, tente novamente.');
+    } finally {
+      setIsSigningIn(false);
+    }
+  };
+
+  const handleSignUp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isSigningIn) return;
+
+    if (!name || !email || !password) {
+      setAuthError('Por favor, preencha todos os campos.');
+      return;
+    }
+
+    if (password.length < 6) {
+      setAuthError('A senha deve ter pelo menos 6 caracteres.');
+      return;
+    }
+
+    setIsSigningIn(true);
+    setAuthError(null);
+
+    try {
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      await updateProfile(userCredential.user, {
+        displayName: name
+      });
+      // Force refresh user state
+      setUser({ ...userCredential.user, displayName: name });
+    } catch (error: any) {
+      console.error('Error signing up:', error);
+      if (error.code === 'auth/email-already-in-use') {
+        setAuthError('Este email já está em uso.');
+      } else if (error.code === 'auth/invalid-email') {
+        setAuthError('Email inválido.');
+      } else {
+        setAuthError('Ocorreu um erro ao cadastrar. Por favor, tente novamente.');
+      }
     } finally {
       setIsSigningIn(false);
     }
@@ -475,23 +527,66 @@ export default function App() {
             </div>
           )}
 
-          <button 
-            onClick={handleSignIn}
-            disabled={isSigningIn}
-            className={cn(
-              "w-full bg-versus hover:bg-versus/90 text-white font-bold py-4 px-6 rounded-2xl shadow-lg shadow-versus/20 transition-all active:scale-95 flex items-center justify-center gap-3",
-              isSigningIn && "opacity-70 cursor-not-allowed"
+          <form onSubmit={isRegistering ? handleSignUp : handleSignIn} className="space-y-4">
+            {isRegistering && (
+              <div className="text-left">
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Nome</label>
+                <input 
+                  type="text" 
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:ring-2 focus:ring-versus outline-none transition-all dark:text-white"
+                  placeholder="Seu nome"
+                  required
+                />
+              </div>
             )}
-          >
-            {isSigningIn ? (
-              <div className="animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-white"></div>
+            <div className="text-left">
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Email</label>
+              <input 
+                type="email" 
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:ring-2 focus:ring-versus outline-none transition-all dark:text-white"
+                placeholder="seu@email.com"
+                required
+              />
+            </div>
+            <div className="text-left">
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Senha</label>
+              <input 
+                type="password" 
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:ring-2 focus:ring-versus outline-none transition-all dark:text-white"
+                placeholder="••••••••"
+                required
+              />
+            </div>
+
+            <button 
+              type="submit"
+              disabled={isSigningIn}
+              className={cn(
+                "w-full bg-versus hover:bg-versus/90 text-white font-bold py-4 px-6 rounded-2xl shadow-lg shadow-versus/20 transition-all active:scale-95 flex items-center justify-center gap-3 mt-6",
+                isSigningIn && "opacity-70 cursor-not-allowed"
+              )}
+            >
+              {isSigningIn ? (
+                <div className="animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-white"></div>
+              ) : (
+                isRegistering ? 'Cadastrar' : 'Entrar'
+              )}
+            </button>
+          </form>
+
+          <div className="mt-6 text-sm text-slate-500 dark:text-slate-400">
+            {isRegistering ? (
+              <p>Já tem uma conta? <button onClick={() => { setIsRegistering(false); setAuthError(null); }} className="text-versus font-bold hover:underline">Entre aqui</button></p>
             ) : (
-              <>
-                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" className="w-6 h-6 bg-white rounded-full p-1" />
-                Entrar com Google
-              </>
+              <p>Não tem uma conta? <button onClick={() => { setIsRegistering(true); setAuthError(null); }} className="text-versus font-bold hover:underline">Cadastre-se</button></p>
             )}
-          </button>
+          </div>
         </motion.div>
       </div>
     );
@@ -510,7 +605,13 @@ export default function App() {
               {isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
             </button>
             <div className="flex items-center gap-3 pl-4 border-l border-slate-200 dark:border-slate-800">
-              <img src={user.photoURL || ''} alt={user.displayName || ''} className="w-8 h-8 rounded-full" />
+              {user.photoURL ? (
+                <img src={user.photoURL} alt={user.displayName || ''} className="w-8 h-8 rounded-full" />
+              ) : (
+                <div className="w-8 h-8 rounded-full bg-versus/10 text-versus flex items-center justify-center font-bold text-xs">
+                  {(user.displayName || user.email || 'U').charAt(0).toUpperCase()}
+                </div>
+              )}
               <button onClick={logOut} className="text-slate-500 hover:text-rose-500 transition-colors">
                 <LogOut className="w-5 h-5" />
               </button>
@@ -588,7 +689,8 @@ export default function App() {
         </main>
 
         <footer className="p-8 text-center text-slate-400 text-sm border-t border-slate-200 dark:border-slate-800">
-          &copy; 2026 Clínica Versus. Todos os direitos reservados.
+          <p>&copy; 2026 Clínica Versus. Todos os direitos reservados.</p>
+          <p className="mt-2 text-xs opacity-70">Desenvolvido por Elvis Souza</p>
         </footer>
       </div>
     );
@@ -728,7 +830,13 @@ export default function App() {
           </button>
 
           <div className="flex items-center gap-3">
-            <img src={user.photoURL || ''} alt={user.displayName || ''} className="w-8 h-8 rounded-full border border-white/20" />
+            {user.photoURL ? (
+              <img src={user.photoURL} alt={user.displayName || ''} className="w-8 h-8 rounded-full border border-white/20" />
+            ) : (
+              <div className="w-8 h-8 rounded-full bg-white/20 text-white flex items-center justify-center font-bold text-xs border border-white/20">
+                {(user.displayName || user.email || 'U').charAt(0).toUpperCase()}
+              </div>
+            )}
             <button onClick={logOut} className="text-white/80 hover:text-white p-2">
               <LogOut className="w-5 h-5" />
             </button>
@@ -1335,6 +1443,11 @@ export default function App() {
           </div>
         )}
       </AnimatePresence>
+
+      <footer className="p-8 text-center text-slate-400 text-sm border-t border-slate-200 dark:border-slate-800 mt-auto">
+        <p>&copy; 2026 Clínica Versus. Todos os direitos reservados.</p>
+        <p className="mt-2 text-xs opacity-70">Desenvolvido por Elvis Souza</p>
+      </footer>
     </div>
   );
 }

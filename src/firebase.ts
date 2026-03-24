@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, updateProfile } from 'firebase/auth';
 import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
@@ -10,6 +10,8 @@ export const googleProvider = new GoogleAuthProvider();
 
 export const signInWithGoogle = () => signInWithPopup(auth, googleProvider);
 export const logOut = () => signOut(auth);
+
+export { createUserWithEmailAndPassword, signInWithEmailAndPassword, updateProfile };
 
 // Test connection to Firestore
 async function testConnection() {
