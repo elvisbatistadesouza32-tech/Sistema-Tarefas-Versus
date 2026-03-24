@@ -7,7 +7,8 @@ import {
   db, 
   createUserWithEmailAndPassword, 
   signInWithEmailAndPassword, 
-  updateProfile 
+  updateProfile,
+  sendPasswordResetEmail
 } from './firebase';
 import { 
   collection, 
@@ -86,6 +87,7 @@ export default function App() {
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [isRegistering, setIsRegistering] = useState(false);
+  const [resetEmailSent, setResetEmailSent] = useState(false);
   const [addingCardToList, setAddingCardToList] = useState<string | null>(null);
   const [newCardTitle, setNewCardTitle] = useState('');
   const [newCardUrgency, setNewCardUrgency] = useState<'low' | 'medium' | 'high'>('low');
@@ -499,6 +501,31 @@ export default function App() {
     }
   };
 
+  const handleResetPassword = async () => {
+    if (!email) {
+      setAuthError('Por favor, digite seu email para redefinir a senha.');
+      return;
+    }
+
+    setIsSigningIn(true);
+    setAuthError(null);
+
+    try {
+      await sendPasswordResetEmail(auth, email);
+      setResetEmailSent(true);
+      setAuthError(null);
+    } catch (error: any) {
+      console.error('Error resetting password:', error);
+      if (error.code === 'auth/user-not-found') {
+        setAuthError('Este email não está cadastrado.');
+      } else {
+        setAuthError('Ocorreu um erro ao enviar o email de redefinição.');
+      }
+    } finally {
+      setIsSigningIn(false);
+    }
+  };
+
   if (!isAuthReady) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
@@ -524,6 +551,12 @@ export default function App() {
           {authError && (
             <div className="mb-6 p-4 bg-rose-50 dark:bg-rose-900/20 text-rose-600 dark:text-rose-400 text-sm rounded-xl border border-rose-100 dark:border-rose-800">
               {authError}
+            </div>
+          )}
+
+          {resetEmailSent && (
+            <div className="mb-6 p-4 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 text-sm rounded-xl border border-emerald-100 dark:border-emerald-800">
+              Email de redefinição enviado! Verifique sua caixa de entrada.
             </div>
           )}
 
@@ -553,14 +586,25 @@ export default function App() {
               />
             </div>
             <div className="text-left">
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Senha</label>
+              <div className="flex justify-between items-center mb-1">
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Senha</label>
+                {!isRegistering && (
+                  <button 
+                    type="button"
+                    onClick={handleResetPassword}
+                    className="text-xs text-versus hover:underline font-medium"
+                  >
+                    Esqueci minha senha
+                  </button>
+                )}
+              </div>
               <input 
                 type="password" 
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:ring-2 focus:ring-versus outline-none transition-all dark:text-white"
                 placeholder="••••••••"
-                required
+                required={!resetEmailSent}
               />
             </div>
 
