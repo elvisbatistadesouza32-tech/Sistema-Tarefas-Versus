@@ -9,7 +9,8 @@ import {
   signInWithEmailAndPassword, 
   updateProfile,
   sendPasswordResetEmail,
-  signInWithGoogle
+  signInWithGoogle,
+  signInAnonymously
 } from './firebase';
 import { 
   collection, 
@@ -481,6 +482,24 @@ export default function App() {
     }
   };
 
+  const handleDepartmentSignIn = async (deptName: string) => {
+    if (isSigningIn) return;
+    setIsSigningIn(true);
+    setAuthError(null);
+    try {
+      const userCredential = await signInAnonymously(auth);
+      await updateProfile(userCredential.user, {
+        displayName: deptName
+      });
+      setUser({ ...userCredential.user, displayName: deptName });
+    } catch (error: any) {
+      console.error('Department Sign In Error:', error);
+      setAuthError('Erro ao entrar como ' + deptName + '. Tente novamente.');
+    } finally {
+      setIsSigningIn(false);
+    }
+  };
+
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSigningIn) return;
@@ -564,106 +583,35 @@ export default function App() {
             <Logo className="scale-150" />
           </div>
           <h1 className="text-3xl font-bold text-slate-900 dark:text-white mb-2">Acesso ao Sistema</h1>
-          <p className="text-slate-500 dark:text-slate-400 mb-8 text-sm">Escolha a forma mais fácil para você entrar.</p>
+          <p className="text-slate-500 dark:text-slate-400 mb-10 text-sm">Selecione seu setor para entrar na Clínica Versus.</p>
           
-          {/* Easy Option: Google */}
-          <button 
-            onClick={handleGoogleSignIn}
-            disabled={isSigningIn}
-            className="w-full mb-6 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 font-bold py-3 px-6 rounded-2xl shadow-sm hover:bg-slate-50 dark:hover:bg-slate-700 transition-all active:scale-95 flex items-center justify-center gap-3"
-          >
-            <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" className="w-5 h-5" />
-            Entrar com Google
-          </button>
-
-          <div className="relative mb-8">
-            <div className="absolute inset-0 flex items-center"><span className="w-full border-t border-slate-200 dark:border-slate-800"></span></div>
-            <div className="relative flex justify-center text-xs uppercase"><span className="bg-white dark:bg-slate-900 px-2 text-slate-500">Ou use seu e-mail</span></div>
-          </div>
-
           {authError && (
-            <div className="mb-6 p-4 bg-rose-50 dark:bg-rose-900/20 text-rose-600 dark:text-rose-400 text-xs rounded-xl border border-rose-100 dark:border-rose-800 text-left">
+            <div className="mb-8 p-4 bg-rose-50 dark:bg-rose-900/20 text-rose-600 dark:text-rose-400 text-xs rounded-2xl border border-rose-100 dark:border-rose-800 text-center">
               {authError}
+              <p className="mt-2 text-[10px] opacity-70">Dica: Certifique-se de que o "Login Anônimo" está ativado no seu console Firebase.</p>
             </div>
           )}
 
-          {resetEmailSent && (
-            <div className="mb-6 p-4 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 text-sm rounded-xl border border-emerald-100 dark:border-emerald-800">
-              Email de redefinição enviado! Verifique sua caixa de entrada.
-            </div>
-          )}
-
-          <form onSubmit={isRegistering ? handleSignUp : handleSignIn} className="space-y-4">
-            {isRegistering && (
-              <div className="text-left">
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Nome</label>
-                <input 
-                  type="text" 
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:ring-2 focus:ring-versus outline-none transition-all dark:text-white"
-                  placeholder="Seu nome"
-                  required
-                />
-              </div>
-            )}
-            <div className="text-left">
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Email</label>
-              <input 
-                type="email" 
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:ring-2 focus:ring-versus outline-none transition-all dark:text-white"
-                placeholder="seu@email.com"
-                required
-              />
-            </div>
-            <div className="text-left">
-              <div className="flex justify-between items-center mb-1">
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Senha</label>
-                {!isRegistering && (
-                  <button 
-                    type="button"
-                    onClick={handleResetPassword}
-                    className="text-xs text-versus hover:underline font-medium"
-                  >
-                    Esqueci minha senha
-                  </button>
-                )}
-              </div>
-              <input 
-                type="password" 
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:ring-2 focus:ring-versus outline-none transition-all dark:text-white"
-                placeholder="••••••••"
-                required={!resetEmailSent}
-              />
-            </div>
-
-            <button 
-              type="submit"
-              disabled={isSigningIn}
-              className={cn(
-                "w-full bg-versus hover:bg-versus/90 text-white font-bold py-4 px-6 rounded-2xl shadow-lg shadow-versus/20 transition-all active:scale-95 flex items-center justify-center gap-3 mt-6",
-                isSigningIn && "opacity-70 cursor-not-allowed"
-              )}
-            >
-              {isSigningIn ? (
-                <div className="animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-white"></div>
-              ) : (
-                isRegistering ? 'Cadastrar' : 'Entrar'
-              )}
-            </button>
-          </form>
-
-          <div className="mt-6 text-sm text-slate-500 dark:text-slate-400">
-            {isRegistering ? (
-              <p>Já tem uma conta? <button onClick={() => { setIsRegistering(false); setAuthError(null); }} className="text-versus font-bold hover:underline">Entre aqui</button></p>
-            ) : (
-              <p>Não tem uma conta? <button onClick={() => { setIsRegistering(true); setAuthError(null); }} className="text-versus font-bold hover:underline">Cadastre-se</button></p>
-            )}
+          {/* Quick Access: Departments Only */}
+          <div className="grid grid-cols-2 gap-4">
+            {['Comercial', 'Staff', 'Gerencia', 'Enfermagem', 'Tec Enf.', 'Recepção'].map((dept) => (
+              <button
+                key={dept}
+                onClick={() => handleDepartmentSignIn(dept)}
+                disabled={isSigningIn}
+                className="bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 p-6 rounded-[2rem] text-slate-700 dark:text-slate-200 font-bold text-base hover:border-versus hover:bg-versus/5 hover:text-versus transition-all active:scale-95 disabled:opacity-50 flex flex-col items-center justify-center gap-2 shadow-sm"
+              >
+                <div className="w-10 h-10 rounded-full bg-versus/10 flex items-center justify-center">
+                  <span className="text-versus text-lg">{dept[0]}</span>
+                </div>
+                {dept}
+              </button>
+            ))}
           </div>
+
+          <p className="mt-12 text-[10px] text-slate-400 dark:text-slate-600">
+            Sistema de Gestão Interna - Clínica Versus
+          </p>
         </motion.div>
       </div>
     );
