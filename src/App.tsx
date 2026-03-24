@@ -8,7 +8,8 @@ import {
   createUserWithEmailAndPassword, 
   signInWithEmailAndPassword, 
   updateProfile,
-  sendPasswordResetEmail
+  sendPasswordResetEmail,
+  signInWithGoogle
 } from './firebase';
 import { 
   collection, 
@@ -453,10 +454,27 @@ export default function App() {
       await signInWithEmailAndPassword(auth, email, password);
     } catch (error: any) {
       console.error('Error signing in:', error);
-      if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
-        setAuthError('Email ou senha incorretos.');
+      if (error.code === 'auth/user-not-found' || error.code === 'auth/invalid-credential' || error.code === 'auth/wrong-password') {
+        // Check if user actually doesn't exist to offer registration
+        setAuthError('Email ou senha incorretos. Se você ainda não tem conta, clique em "Criar nova conta".');
       } else {
         setAuthError('Ocorreu um erro ao entrar. Por favor, tente novamente.');
+      }
+    } finally {
+      setIsSigningIn(false);
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    if (isSigningIn) return;
+    setIsSigningIn(true);
+    setAuthError(null);
+    try {
+      await signInWithGoogle();
+    } catch (error: any) {
+      console.error('Google Sign In Error:', error);
+      if (error.code !== 'auth/popup-closed-by-user') {
+        setAuthError('Erro ao entrar com Google. Tente o e-mail e senha.');
       }
     } finally {
       setIsSigningIn(false);
@@ -485,12 +503,12 @@ export default function App() {
       await updateProfile(userCredential.user, {
         displayName: name
       });
-      // Force refresh user state
       setUser({ ...userCredential.user, displayName: name });
     } catch (error: any) {
       console.error('Error signing up:', error);
       if (error.code === 'auth/email-already-in-use') {
-        setAuthError('Este email já está em uso.');
+        setAuthError('Este e-mail já está cadastrado. Tente entrar em vez de criar conta.');
+        setIsRegistering(false); // Auto-switch to login
       } else if (error.code === 'auth/invalid-email') {
         setAuthError('Email inválido.');
       } else {
@@ -545,11 +563,26 @@ export default function App() {
           <div className="mb-8">
             <Logo className="scale-150" />
           </div>
-          <h1 className="text-3xl font-bold text-slate-900 dark:text-white mb-4">Bem-vindo à Clínica Versus</h1>
-          <p className="text-slate-500 dark:text-slate-400 mb-8">Gerencie os processos da clínica com facilidade e colaboração em tempo real.</p>
+          <h1 className="text-3xl font-bold text-slate-900 dark:text-white mb-2">Acesso ao Sistema</h1>
+          <p className="text-slate-500 dark:text-slate-400 mb-8 text-sm">Escolha a forma mais fácil para você entrar.</p>
           
+          {/* Easy Option: Google */}
+          <button 
+            onClick={handleGoogleSignIn}
+            disabled={isSigningIn}
+            className="w-full mb-6 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 font-bold py-3 px-6 rounded-2xl shadow-sm hover:bg-slate-50 dark:hover:bg-slate-700 transition-all active:scale-95 flex items-center justify-center gap-3"
+          >
+            <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" className="w-5 h-5" />
+            Entrar com Google
+          </button>
+
+          <div className="relative mb-8">
+            <div className="absolute inset-0 flex items-center"><span className="w-full border-t border-slate-200 dark:border-slate-800"></span></div>
+            <div className="relative flex justify-center text-xs uppercase"><span className="bg-white dark:bg-slate-900 px-2 text-slate-500">Ou use seu e-mail</span></div>
+          </div>
+
           {authError && (
-            <div className="mb-6 p-4 bg-rose-50 dark:bg-rose-900/20 text-rose-600 dark:text-rose-400 text-sm rounded-xl border border-rose-100 dark:border-rose-800">
+            <div className="mb-6 p-4 bg-rose-50 dark:bg-rose-900/20 text-rose-600 dark:text-rose-400 text-xs rounded-xl border border-rose-100 dark:border-rose-800 text-left">
               {authError}
             </div>
           )}
