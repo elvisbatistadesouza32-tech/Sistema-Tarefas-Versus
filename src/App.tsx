@@ -77,6 +77,7 @@ export default function App() {
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [boards, setBoards] = useState<Board[]>([]);
+  const [loadingBoards, setLoadingBoards] = useState(true);
   const [activeBoardId, setActiveBoardId] = useState<string | null>(null);
   const [lists, setLists] = useState<List[]>([]);
   const [cards, setCards] = useState<Card[]>([]);
@@ -111,21 +112,25 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
       if (currentUser) {
-        // Sync user profile to Firestore
-        const userRef = doc(db, 'users', currentUser.uid);
-        const userSnap = await getDoc(userRef);
-        
-        const isAdminEmail = currentUser.email === "elvisbatistadesouza32@gmail.com";
-        const role = userSnap.exists() ? (userSnap.data().role || (isAdminEmail ? 'admin' : 'user')) : (isAdminEmail ? 'admin' : 'user');
-        
-        setIsAdmin(role === 'admin');
+        try {
+          // Sync user profile to Firestore
+          const userRef = doc(db, 'users', currentUser.uid);
+          const userSnap = await getDoc(userRef);
+          
+          const isAdminEmail = currentUser.email === "elvisbatistadesouza32@gmail.com";
+          const role = userSnap.exists() ? (userSnap.data().role || (isAdminEmail ? 'admin' : 'user')) : (isAdminEmail ? 'admin' : 'user');
+          
+          setIsAdmin(role === 'admin');
 
-        await setDoc(userRef, {
-          name: currentUser.displayName || 'Anonymous',
-          email: currentUser.email || '',
-          photoUrl: currentUser.photoURL || '',
-          role: role
-        }, { merge: true });
+          await setDoc(userRef, {
+            name: currentUser.displayName || 'Anonymous',
+            email: currentUser.email || '',
+            photoUrl: currentUser.photoURL || '',
+            role: role
+          }, { merge: true });
+        } catch (error) {
+          console.error("Error syncing user profile:", error);
+        }
       } else {
         setIsAdmin(false);
       }
@@ -250,8 +255,10 @@ export default function App() {
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const boardsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Board));
       setBoards(boardsData);
+      setLoadingBoards(false);
     }, (error) => {
       console.error('Firestore Error (Boards):', error);
+      setLoadingBoards(false);
     });
 
     return () => unsubscribe();
@@ -444,7 +451,9 @@ export default function App() {
   // Bootstrap default boards if none exist
   useEffect(() => {
     const bootstrapBoards = async () => {
-      if (isAuthReady && user && boards.length === 0) {
+      console.log('Bootstrap check:', { isAuthReady, user: !!user, loadingBoards, boardsCount: boards.length });
+      if (isAuthReady && user && !loadingBoards && boards.length === 0) {
+        console.log('Starting bootstrap for user:', user.uid);
         const defaultBoards = [
           { name: 'Comercial', background: 'bg-blue-500' },
           { name: 'Staff', background: 'bg-purple-500' },
@@ -463,14 +472,17 @@ export default function App() {
               createdAt: serverTimestamp()
             });
           }
-        } catch (error) {
+        } catch (error: any) {
           console.error('Error bootstrapping boards:', error);
+          // If it's a permission error, it might be because the user is not an admin
+          // but we allowed create for isAuthenticated, so this shouldn't happen
+          // unless the rules haven't propagated yet.
         }
       }
     };
 
     bootstrapBoards();
-  }, [isAuthReady, user, boards.length]);
+  }, [isAuthReady, user, loadingBoards, boards.length]);
 
   const handleSignIn = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
