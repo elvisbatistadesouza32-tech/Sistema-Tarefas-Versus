@@ -216,7 +216,27 @@ export default function App() {
   const [editingListName, setEditingListName] = useState('');
   const [listToDeleteId, setListToDeleteId] = useState<string | null>(null);
   const isInitializingRef = React.useRef(false);
-  const hasCleanedUpRef = React.useRef(false);  // Auth Listener
+  const hasCleanedUpRef = React.useRef(false);
+  const lastUserUidRef = React.useRef<string | null>(null);
+
+  // Reset initialization flag when user changes
+  useEffect(() => {
+    if (user?.uid !== lastUserUidRef.current) {
+      console.log('User changed or logged out, resetting initialization refs');
+      isInitializingRef.current = false;
+      hasCleanedUpRef.current = false;
+      lastUserUidRef.current = user?.uid || null;
+      
+      if (!user) {
+        setActiveBoardId(null);
+        setBoards([]);
+        setLists([]);
+        setCards([]);
+      }
+    }
+  }, [user?.uid]);
+
+  // Auth Listener
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
@@ -261,6 +281,8 @@ export default function App() {
       } else {
         setIsAdmin(false);
         setIsAuthReady(true);
+        // Clear cached role on logout
+        localStorage.clear();
       }
     });
     return () => unsubscribe();
@@ -274,11 +296,15 @@ export default function App() {
 
       // For non-admins, we only need to initialize their specific department board
       // This significantly reduces the number of Firestore calls on login
+      const userDept = user.displayName?.trim().toLowerCase();
       const sectorsToInit = isAdmin 
         ? DEFAULT_SECTORS 
-        : DEFAULT_SECTORS.filter(s => s.name.toLowerCase() === user.displayName?.toLowerCase());
+        : DEFAULT_SECTORS.filter(s => s.name.trim().toLowerCase() === userDept);
+
+      console.log(`Initializing app for ${isAdmin ? 'Admin' : userDept}. Sectors:`, sectorsToInit.map(s => s.name));
 
       if (sectorsToInit.length === 0 && !isAdmin) {
+        console.warn('No sectors found to initialize for user:', user.displayName);
         isInitializingRef.current = false;
         return;
       }
@@ -424,7 +450,8 @@ export default function App() {
       // Filter boards for non-admins to only show their department board
       let finalBoards = boardsData;
       if (!isAdmin && user.displayName) {
-        finalBoards = boardsData.filter(b => b.name.toLowerCase() === user.displayName?.toLowerCase());
+        const userDept = user.displayName.trim().toLowerCase();
+        finalBoards = boardsData.filter(b => b.name.trim().toLowerCase() === userDept);
       }
       
       setBoards(finalBoards);
@@ -471,7 +498,22 @@ export default function App() {
     };
   }, [activeBoardId, user]);
 
-  const activeBoard = useMemo(() => boards.find(b => b.id === activeBoardId), [boards, activeBoardId]);
+  const activeBoard = useMemo(() => {
+    const board = boards.find(b => b.id === activeBoardId);
+    // If we have an activeBoardId but it's not in the boards list yet, 
+    // it might be because it's still loading or the user doesn't have access.
+    // However, for department users, we pre-set it, so we should wait for it.
+    return board;
+  }, [boards, activeBoardId]);
+
+  // Reset activeBoardId if it's set but the board doesn't exist in the loaded list 
+  // after loading is complete (only for admins, as department users might be waiting for initialization)
+  useEffect(() => {
+    if (activeBoardId && !loadingBoards && boards.length > 0 && !activeBoard && isAdmin) {
+      console.log("Active board not found in list, resetting...");
+      setActiveBoardId(null);
+    }
+  }, [activeBoardId, loadingBoards, boards, activeBoard, isAdmin]);
 
   const moveCardToList = async (cardId: string, targetListId: string) => {
     if (!activeBoardId) return;
@@ -634,8 +676,15 @@ export default function App() {
     setNewCardIsRecurrent(false);
   };
 
-  // Removed old bootstrapBoards effect in favor of consolidated initializeApp logic
-  
+  const handleLogOut = async () => {
+    try {
+      await logOut();
+      // State reset is handled by the user?.uid useEffect
+    } catch (error) {
+      console.error("Error logging out:", error);
+    }
+  };
+
   const handleSignIn = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (isSigningIn) return;
@@ -712,6 +761,35 @@ export default function App() {
         // Pre-set active board ID for immediate transition
         const sector = DEFAULT_SECTORS.find(s => s.name === deptName);
         if (sector) {
+          // Pre-initialize the board right here for faster access
+          const boardRef = doc(db, 'boards', sector.id);
+          const boardSnap = await getDoc(boardRef);
+          
+          if (!boardSnap.exists()) {
+            console.log(`Pre-creating board for ${deptName}`);
+            const batch = writeBatch(db);
+            batch.set(boardRef, {
+              name: sector.name,
+              ownerId: 'system',
+              members: [userCredential.user.uid],
+              background: sector.background,
+              createdAt: serverTimestamp()
+            });
+            const defaultLists = ['DEMANDAS', 'EM ANDAMENTO', 'FINALIZADAS'];
+            defaultLists.forEach((listName, i) => {
+              const listRef = doc(collection(db, `boards/${sector.id}/lists`));
+              batch.set(listRef, { name: listName, boardId: sector.id, order: i, createdAt: serverTimestamp() });
+            });
+            await batch.commit();
+          } else {
+            const data = boardSnap.data();
+            const currentMembers = data.members || [];
+            if (!currentMembers.includes(userCredential.user.uid)) {
+              await updateDoc(boardRef, {
+                members: [...currentMembers, userCredential.user.uid]
+              });
+            }
+          }
           setActiveBoardId(sector.id);
         }
         setUser({ ...userCredential.user, displayName: deptName });
@@ -921,7 +999,7 @@ export default function App() {
                   {(user.displayName || user.email || 'U').charAt(0).toUpperCase()}
                 </div>
               )}
-              <button onClick={logOut} className="text-slate-500 hover:text-rose-500 transition-colors">
+            <button onClick={handleLogOut} className="text-slate-500 hover:text-rose-500 transition-colors">
                 <LogOut className="w-5 h-5" />
               </button>
             </div>
@@ -1055,6 +1133,28 @@ export default function App() {
     );
   }
 
+  if (loadingBoards && !activeBoardId) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 border-4 border-versus border-t-transparent rounded-full animate-spin"></div>
+          <p className="text-slate-500 dark:text-slate-400 font-medium">Carregando seus quadros...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (activeBoardId && !activeBoard) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 border-4 border-versus border-t-transparent rounded-full animate-spin"></div>
+          <p className="text-slate-500 dark:text-slate-400 font-medium">Carregando quadro...</p>
+        </div>
+      </div>
+    );
+  }
+
   if (!activeBoardId) {
     return (
       <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center p-6">
@@ -1165,7 +1265,7 @@ export default function App() {
                 {(user.displayName || user.email || 'U').charAt(0).toUpperCase()}
               </div>
             )}
-            <button onClick={logOut} className="text-white/80 hover:text-white p-2">
+            <button onClick={handleLogOut} className="text-white/80 hover:text-white p-2">
               <LogOut className="w-5 h-5" />
             </button>
           </div>
