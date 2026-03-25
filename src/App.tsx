@@ -53,7 +53,8 @@ import {
   AlertCircle,
   Zap,
   ArrowRightLeft,
-  Calendar
+  Calendar,
+  Trash2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -345,6 +346,8 @@ export default function App() {
   const [viewMode, setViewMode] = useState<'board' | 'calendar'>('board');
   const [newCardDueDate, setNewCardDueDate] = useState<string>('');
   const [reminders, setReminders] = useState<Card[]>([]);
+  const [showRemindersModal, setShowRemindersModal] = useState(false);
+  const [hasSeenRemindersToday, setHasSeenRemindersToday] = useState(false);
   const [showCalendarAddModal, setShowCalendarAddModal] = useState(false);
   const [calendarSelectedDate, setCalendarSelectedDate] = useState<Date | null>(null);
   const [calendarSelectedListId, setCalendarSelectedListId] = useState<string>('');
@@ -839,9 +842,24 @@ export default function App() {
     setNewCardDueDate('');
   };
 
+  const deleteCard = async (cardId: string) => {
+    if (!activeBoardId) return;
+    try {
+      await deleteDoc(doc(db, `boards/${activeBoardId}/cards`, cardId));
+      setMovingCardId(null);
+    } catch (error) {
+      console.error("Error deleting card:", error);
+    }
+  };
+
+  // Reset reminder visibility when switching boards
+  useEffect(() => {
+    setHasSeenRemindersToday(false);
+  }, [activeBoardId]);
+
   // Check for reminders
   useEffect(() => {
-    if (!cards.length) return;
+    if (!cards.length || hasSeenRemindersToday) return;
     
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -853,8 +871,12 @@ export default function App() {
       return dueDate.getTime() === today.getTime();
     });
     
-    setReminders(dueToday);
-  }, [cards]);
+    if (dueToday.length > 0) {
+      setReminders(dueToday);
+      setShowRemindersModal(true);
+      setHasSeenRemindersToday(true);
+    }
+  }, [cards, hasSeenRemindersToday]);
 
   const handleLogOut = async () => {
     try {
@@ -1506,29 +1528,6 @@ export default function App() {
 
       {/* Kanban Area */}
       <main className="flex-1 overflow-x-auto overflow-y-hidden p-6 custom-scrollbar relative">
-        {reminders.length > 0 && (
-          <motion.div 
-            initial={{ opacity: 0, y: -20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="absolute top-4 right-6 z-50 bg-amber-50 dark:bg-amber-900/40 border border-amber-200 dark:border-amber-800 p-4 rounded-2xl shadow-xl backdrop-blur-md max-w-xs"
-          >
-            <div className="flex items-center gap-2 mb-2">
-              <AlertCircle className="w-5 h-5 text-amber-600 dark:text-amber-400" />
-              <h3 className="font-bold text-amber-900 dark:text-amber-100 text-sm">Lembrete de Hoje</h3>
-              <button onClick={() => setReminders([])} className="ml-auto text-amber-400 hover:text-amber-600">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="space-y-2">
-              {reminders.map(card => (
-                <div key={card.id} className="text-xs text-amber-800 dark:text-amber-200 bg-white/50 dark:bg-black/20 p-2 rounded-lg">
-                  {card.title}
-                </div>
-              ))}
-            </div>
-          </motion.div>
-        )}
-
         <AnimatePresence mode="wait">
           {viewMode === 'board' ? (
             <motion.div
@@ -1606,8 +1605,20 @@ export default function App() {
                             )}></div>
                           )}
                           <div className="flex items-center justify-between mb-2">
-                            <h4 className="text-sm font-medium text-slate-900 dark:text-white">{card.title}</h4>
-                            <div className="flex items-center gap-1.5">
+                            <h4 className="text-sm font-medium text-slate-900 dark:text-white pr-6">{card.title}</h4>
+                            <div className="absolute top-3 right-3 flex items-center gap-1.5">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (window.confirm('Excluir esta tarefa?')) {
+                                    deleteCard(card.id);
+                                  }
+                                }}
+                                className="p-1 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-md text-slate-300 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all"
+                                title="Excluir tarefa"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
                               <div
                                 className="p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-md text-slate-400 group-hover:text-blue-500 transition-colors"
                                 title="Mover tarefa"
@@ -2226,10 +2237,105 @@ export default function App() {
                 })}
               </div>
               
-              <div className="p-6 bg-slate-50 dark:bg-slate-800/50 text-center">
-                <p className="text-xs text-slate-400">
-                  Clique fora para cancelar a movimentação.
+              <div className="p-6 bg-slate-50 dark:bg-slate-800/50 flex flex-col gap-4">
+                <button
+                  onClick={() => {
+                    if (window.confirm('Tem certeza que deseja excluir esta tarefa?')) {
+                      deleteCard(movingCardId);
+                    }
+                  }}
+                  className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/20 font-bold transition-all border border-rose-100 dark:border-rose-900/30"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Excluir Tarefa
+                </button>
+                <p className="text-xs text-slate-400 text-center">
+                  Clique fora para cancelar.
                 </p>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Reminders Modal */}
+      <AnimatePresence>
+        {showRemindersModal && reminders.length > 0 && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-6">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowRemindersModal(false)}
+              className="absolute inset-0 bg-slate-950/80 backdrop-blur-xl"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 40 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 40 }}
+              className="bg-white dark:bg-slate-900 rounded-[3rem] shadow-[0_32px_64px_-12px_rgba(0,0,0,0.5)] border border-white dark:border-slate-800 overflow-hidden w-full max-w-2xl relative z-10"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="p-10 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-amber-50/50 dark:bg-amber-900/10">
+                <div className="flex items-center gap-6">
+                  <div className="w-20 h-20 bg-amber-100 dark:bg-amber-900/30 rounded-[2rem] flex items-center justify-center text-amber-600 dark:text-amber-400 shadow-inner">
+                    <Zap className="w-10 h-10" />
+                  </div>
+                  <div>
+                    <h2 className="text-4xl font-black text-slate-900 dark:text-white tracking-tight">Lembrete de Hoje</h2>
+                    <p className="text-amber-600 dark:text-amber-400 font-bold uppercase tracking-widest text-sm mt-1">
+                      {new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })}
+                    </p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setShowRemindersModal(false)}
+                  className="p-3 text-slate-400 hover:text-rose-500 transition-all hover:rotate-90"
+                >
+                  <X className="w-8 h-8" />
+                </button>
+              </div>
+              
+              <div className="p-10 max-h-[50vh] overflow-y-auto custom-scrollbar space-y-4">
+                <p className="text-slate-500 dark:text-slate-400 text-lg mb-6">
+                  Você tem <span className="text-amber-600 dark:text-amber-400 font-bold">{reminders.length}</span> {reminders.length === 1 ? 'demanda agendada' : 'demandas agendadas'} para hoje:
+                </p>
+                {reminders.map(card => (
+                  <div 
+                    key={card.id}
+                    onClick={() => {
+                      setShowRemindersModal(false);
+                      setMovingCardId(card.id);
+                    }}
+                    className="group bg-slate-50 dark:bg-slate-800/50 p-6 rounded-[2rem] border border-transparent hover:border-amber-200 dark:hover:border-amber-900/50 hover:bg-white dark:hover:bg-slate-800 transition-all cursor-pointer flex items-center justify-between shadow-sm hover:shadow-xl hover:-translate-y-1"
+                  >
+                    <div className="flex items-center gap-5">
+                      <div className={cn(
+                        "w-3 h-12 rounded-full",
+                        card.urgency === 'high' ? "bg-rose-500" : 
+                        card.urgency === 'medium' ? "bg-amber-500" : "bg-blue-500"
+                      )} />
+                      <div>
+                        <h4 className="text-xl font-bold text-slate-900 dark:text-white group-hover:text-amber-600 transition-colors">{card.title}</h4>
+                        <p className="text-sm text-slate-400 mt-1">
+                          {lists.find(l => l.id === card.listId)?.name || 'Sem lista'}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="p-3 bg-white dark:bg-slate-700 rounded-xl shadow-sm text-slate-400 group-hover:text-amber-500 transition-all">
+                      <ChevronRight className="w-6 h-6" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="p-10 bg-slate-50 dark:bg-slate-800/50">
+                <button
+                  onClick={() => setShowRemindersModal(false)}
+                  className="w-full bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-black py-6 rounded-[2rem] shadow-2xl hover:scale-[1.02] active:scale-95 transition-all text-xl uppercase tracking-widest"
+                >
+                  Entendido, mãos à obra!
+                </button>
               </div>
             </motion.div>
           </div>
