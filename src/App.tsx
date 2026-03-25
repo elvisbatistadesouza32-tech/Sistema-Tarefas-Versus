@@ -245,117 +245,105 @@ export default function App() {
   useEffect(() => {
     const initializeApp = async () => {
       if (!isAuthReady || !user || loadingBoards || isInitializingRef.current) return;
+      isInitializingRef.current = true;
 
       const defaultSectors = [
-        { name: 'Comercial', background: 'bg-gradient-to-br from-amber-500 to-orange-600' },
-        { name: 'Staff', background: 'bg-gradient-to-br from-blue-500 to-indigo-600' },
-        { name: 'Gerencia', background: 'bg-slate-800' },
-        { name: 'Enfermagem', background: 'bg-gradient-to-br from-emerald-500 to-teal-600' },
-        { name: 'Tec Enf.', background: 'bg-teal-500' },
-        { name: 'Recepção', background: 'bg-gradient-to-br from-rose-500 to-pink-600' }
+        { id: 'board_comercial', name: 'Comercial', background: 'bg-gradient-to-br from-sky-500 to-blue-700' },
+        { id: 'board_staff', name: 'Staff', background: 'bg-gradient-to-br from-fuchsia-600 to-purple-800' },
+        { id: 'board_gerencia', name: 'Gerencia', background: 'bg-slate-900' },
+        { id: 'board_enfermagem', name: 'Enfermagem', background: 'bg-gradient-to-br from-emerald-500 to-emerald-700' },
+        { id: 'board_tec_enf', name: 'Tec Enf.', background: 'bg-gradient-to-br from-cyan-600 to-cyan-800' },
+        { id: 'board_recepcao', name: 'Recepção', background: 'bg-gradient-to-br from-orange-500 to-orange-700' }
       ];
 
-      // Only admins get all sectors automatically if they are missing
-      // Regular users only get them if they have 0 boards
-      const shouldBootstrap = isAdmin || boards.length === 0;
+      console.log('Starting deterministic initialization for user:', user.uid);
+      
+      try {
+        for (const sector of defaultSectors) {
+          const boardRef = doc(db, 'boards', sector.id);
+          const boardSnap = await getDoc(boardRef);
 
-      if (!shouldBootstrap) return;
+          if (!boardSnap.exists()) {
+            console.log(`Creating deterministic board: ${sector.name}`);
+            await setDoc(boardRef, {
+              name: sector.name,
+              ownerId: 'system',
+              members: [user.uid],
+              background: sector.background,
+              createdAt: serverTimestamp()
+            }).catch(err => handleFirestoreError(err, OperationType.CREATE, `boards/${sector.id}`));
 
-      const sectorsToCreate = isAdmin 
-        ? defaultSectors.filter(s => !boards.some(b => b.name === s.name))
-        : (boards.length === 0 ? defaultSectors : []);
-
-      if (sectorsToCreate.length > 0) {
-        console.log('Starting initialization for user:', user.uid, 'Sectors to create:', sectorsToCreate.map(s => s.name));
-        isInitializingRef.current = true;
-        
-        try {
-          for (const sector of sectorsToCreate) {
-            // Double check if board already exists in Firestore to prevent duplicates across sessions
-            const q = query(collection(db, 'boards'), where('name', '==', sector.name), where('ownerId', '==', user.uid));
-            const existing = await getDocs(q).catch(err => handleFirestoreError(err, OperationType.GET, 'boards'));
-            
-            if (existing && existing.empty) {
-              console.log(`Creating board: ${sector.name}`);
-              const boardRef = await addDoc(collection(db, 'boards'), {
-                name: sector.name,
-                ownerId: user.uid,
-                members: [user.uid],
-                background: sector.background,
+            // Add default lists
+            const defaultLists = ['DEMANDAS', 'EM ANDAMENTO', 'FINALIZADAS'];
+            for (let i = 0; i < defaultLists.length; i++) {
+              await addDoc(collection(db, `boards/${sector.id}/lists`), {
+                name: defaultLists[i],
+                boardId: sector.id,
+                order: i,
                 createdAt: serverTimestamp()
-              }).catch(err => handleFirestoreError(err, OperationType.CREATE, 'boards'));
+              }).catch(err => handleFirestoreError(err, OperationType.CREATE, `boards/${sector.id}/lists`));
+            }
+          } else {
+            // Ensure user is a member and background is correct
+            const data = boardSnap.data();
+            const currentMembers = data.members || [];
+            const updates: any = {};
+            
+            if (!currentMembers.includes(user.uid)) {
+              updates.members = [...currentMembers, user.uid];
+            }
+            
+            // Force update background if it's missing or legacy
+            if (!data.background || data.background === 'bg-versus' || data.background.includes('slate')) {
+              updates.background = sector.background;
+            }
 
-              if (boardRef) {
-                // Add default lists
-                const defaultLists = ['DEMANDAS', 'EM ANDAMENTO', 'FINALIZADAS'];
-                for (let i = 0; i < defaultLists.length; i++) {
-                  await addDoc(collection(db, `boards/${boardRef.id}/lists`), {
-                    name: defaultLists[i],
-                    boardId: boardRef.id,
-                    order: i,
-                    createdAt: serverTimestamp()
-                  }).catch(err => handleFirestoreError(err, OperationType.CREATE, `boards/${boardRef.id}/lists`));
-                }
-              }
-            } else {
-              console.log(`Board ${sector.name} already exists, skipping.`);
+            if (Object.keys(updates).length > 0) {
+              await updateDoc(boardRef, updates).catch(err => handleFirestoreError(err, OperationType.UPDATE, `boards/${sector.id}`));
             }
           }
-        } catch (error: any) {
-          console.error('Error during initialization:', error);
-          // The error was already handled and re-thrown by handleFirestoreError
-          // ErrorBoundary will catch it if it's not caught here.
-          throw error;
-        } finally {
-          // We don't reset isInitializingRef.current to false immediately to prevent re-runs in the same session
-          // unless the component unmounts and remounts.
         }
+      } catch (error: any) {
+        console.error('Error during deterministic initialization:', error);
       }
     };
 
     initializeApp();
-  }, [isAdmin, user, boards, isAuthReady, loadingBoards]);
+  }, [isAdmin, user, isAuthReady, loadingBoards]);
 
-  // Cleanup Duplicates (Admin only)
+  // Global Cleanup for Duplicates (Admin only)
   useEffect(() => {
-    if (isAdmin && user && isAuthReady && boards.length > 1 && !hasCleanedUpRef.current) {
+    if (isAdmin && user && isAuthReady && !hasCleanedUpRef.current) {
       const cleanup = async () => {
-        console.log('Checking for duplicate boards...');
-        const nameGroups: { [key: string]: Board[] } = {};
-        boards.forEach(b => {
-          if (!nameGroups[b.name]) nameGroups[b.name] = [];
-          nameGroups[b.name].push(b);
-        });
-
-        let cleaned = false;
-        for (const name in nameGroups) {
-          const group = nameGroups[name];
-          if (group.length > 1) {
-            cleaned = true;
-            console.log(`Found ${group.length} duplicates for board: ${name}. Cleaning up...`);
-            // Sort by createdAt (oldest first)
-            group.sort((a, b) => {
-              const timeA = a.createdAt?.toMillis?.() || 0;
-              const timeB = b.createdAt?.toMillis?.() || 0;
-              return timeA - timeB;
-            });
-            const toKeep = group[0];
-            const toDelete = group.slice(1);
-
-            for (const board of toDelete) {
-              console.log(`Cleaning up duplicate board: ${board.name} (${board.id})`);
-              await deleteBoardWithContents(board.id);
+        hasCleanedUpRef.current = true;
+        console.log('Running global legacy cleanup...');
+        
+        try {
+          const q = query(collection(db, 'boards'));
+          const snap = await getDocs(q);
+          
+          const defaultSectorNames = ['comercial', 'staff', 'gerencia', 'enfermagem', 'tec enf.', 'recepção'];
+          const defaultSectorIds = ['board_comercial', 'board_staff', 'board_gerencia', 'board_enfermagem', 'board_tec_enf', 'board_recepcao'];
+          
+          for (const d of snap.docs) {
+            const data = d.data();
+            const name = (data.name || '').trim().toLowerCase();
+            
+            // If it has a default name but NOT a deterministic ID, it's a legacy duplicate
+            if (defaultSectorNames.includes(name) && !defaultSectorIds.includes(d.id)) {
+              console.log(`Deleting legacy duplicate board: ${data.name} (${d.id})`);
+              await deleteBoardWithContents(d.id);
             }
           }
+          console.log('Global cleanup finished.');
+        } catch (error) {
+          console.error('Error during global cleanup:', error);
+          hasCleanedUpRef.current = false; // Allow retry on error
         }
-        if (cleaned) {
-          console.log('Cleanup complete.');
-        }
-        hasCleanedUpRef.current = true;
       };
       cleanup();
     }
-  }, [isAdmin, user, boards, isAuthReady]);
+  }, [isAdmin, user, isAuthReady]);
 
   const deleteBoardWithContents = async (boardId: string) => {
     try {
@@ -494,17 +482,25 @@ export default function App() {
   const createBoard = async (name: string) => {
     if (!user) return;
 
-    // Prevent duplicate names
-    if (boards.some(b => b.name.toLowerCase() === name.toLowerCase())) {
+    const trimmedName = name.trim();
+    const defaultSectorNames = ['comercial', 'staff', 'gerencia', 'enfermagem', 'tec enf.', 'recepção'];
+    
+    if (defaultSectorNames.includes(trimmedName.toLowerCase())) {
+      alert('Este é um setor padrão do sistema e já deve existir. Verifique sua lista de processos.');
+      return;
+    }
+
+    // Prevent duplicate names for custom boards
+    if (boards.some(b => b.name.toLowerCase() === trimmedName.toLowerCase())) {
       alert('Já existe um setor com este nome.');
       return;
     }
 
     const boardData = {
-      name,
+      name: trimmedName,
       ownerId: user.uid,
       members: [user.uid],
-      background: 'bg-versus',
+      background: 'bg-gradient-to-br from-slate-700 to-slate-900',
       createdAt: Timestamp.now()
     };
     const docRef = await addDoc(collection(db, 'boards'), boardData);
@@ -512,7 +508,7 @@ export default function App() {
     setShowNewBoardModal(false);
 
     // Add default lists
-    const defaultLists = ['A fazer', 'Em andamento', 'Concluído'];
+    const defaultLists = ['DEMANDAS', 'EM ANDAMENTO', 'FINALIZADAS'];
     for (let i = 0; i < defaultLists.length; i++) {
       await addDoc(collection(db, `boards/${docRef.id}/lists`), {
         name: defaultLists[i],
@@ -976,14 +972,15 @@ export default function App() {
                 key={board.id}
                 onClick={() => setActiveBoardId(board.id)}
                 className={cn(
-                  "h-32 rounded-2xl p-4 text-left flex flex-col justify-between transition-all hover:scale-105 shadow-lg",
-                  board.background
+                  "h-32 rounded-2xl p-4 text-left flex flex-col justify-between transition-all hover:scale-105 shadow-lg relative overflow-hidden group",
+                  board.background || 'bg-slate-200 dark:bg-slate-800'
                 )}
               >
-                <span className="text-white font-bold text-lg">{board.name}</span>
-                <div className="flex items-center justify-between">
-                  <span className="text-white/60 text-xs">{board.members.length} membros</span>
-                  <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
+                <div className="absolute inset-0 bg-black/10 group-hover:bg-black/20 transition-colors" />
+                <span className="text-white font-bold text-xl relative z-10 drop-shadow-[0_2px_2px_rgba(0,0,0,0.5)]">{board.name}</span>
+                <div className="flex items-center justify-between relative z-10">
+                  <span className="text-white font-semibold text-xs drop-shadow-sm">{board.members.length} membros</span>
+                  <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center backdrop-blur-sm">
                     <ChevronLeft className="w-4 h-4 text-white rotate-180" />
                   </div>
                 </div>
