@@ -516,7 +516,8 @@ export default function App() {
       }
     } catch (error: any) {
       console.error('Department Access Error:', error);
-      setAuthError('Erro ao acessar o sistema. Por favor, tente novamente em alguns instantes.');
+      const errorCode = error.code || 'unknown';
+      setAuthError(`Erro ao acessar o sistema (${errorCode}). Por favor, verifique se o provedor "E-mail/Senha" está ativado no Firebase Console.`);
     } finally {
       setIsSigningIn(false);
     }
