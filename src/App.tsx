@@ -23,6 +23,7 @@ import {
   deleteDoc, 
   orderBy, 
   Timestamp,
+  serverTimestamp,
   setDoc,
   getDoc,
   getDocs,
@@ -439,6 +440,37 @@ export default function App() {
     setNewCardUrgency('low');
     setNewCardIsRecurrent(false);
   };
+
+  // Bootstrap default boards if none exist
+  useEffect(() => {
+    const bootstrapBoards = async () => {
+      if (isAuthReady && user && boards.length === 0) {
+        const defaultBoards = [
+          { name: 'Comercial', background: 'bg-blue-500' },
+          { name: 'Staff', background: 'bg-purple-500' },
+          { name: 'Gerencia', background: 'bg-slate-800' },
+          { name: 'Enfermagem', background: 'bg-emerald-500' },
+          { name: 'Tec Enf.', background: 'bg-teal-500' },
+          { name: 'Recepção', background: 'bg-amber-500' }
+        ];
+
+        try {
+          for (const board of defaultBoards) {
+            await addDoc(collection(db, 'boards'), {
+              ...board,
+              ownerId: user.uid,
+              members: [user.uid],
+              createdAt: serverTimestamp()
+            });
+          }
+        } catch (error) {
+          console.error('Error bootstrapping boards:', error);
+        }
+      }
+    };
+
+    bootstrapBoards();
+  }, [isAuthReady, user, boards.length]);
 
   const handleSignIn = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
