@@ -44,6 +44,7 @@ import {
   MessageSquare, 
   User as UserIcon,
   ChevronLeft,
+  ChevronRight,
   Settings,
   PlusCircle,
   Trello,
@@ -51,7 +52,8 @@ import {
   Repeat,
   AlertCircle,
   Zap,
-  ArrowRightLeft
+  ArrowRightLeft,
+  Calendar
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -180,6 +182,131 @@ const DEFAULT_SECTORS = [
   { id: 'board_recepcao', name: 'Recepção', background: 'bg-gradient-to-br from-orange-500 to-orange-700' }
 ];
 
+const CalendarView = ({ cards, onCardClick, onDayClick }: { cards: Card[], onCardClick: (card: Card) => void, onDayClick: (date: Date) => void }) => {
+  const [currentDate, setCurrentDate] = useState(new Date());
+  
+  const daysInMonth = (year: number, month: number) => new Date(year, month + 1, 0).getDate();
+  const firstDayOfMonth = (year: number, month: number) => new Date(year, month, 1).getDay();
+  
+  const year = currentDate.getFullYear();
+  const month = currentDate.getMonth();
+  
+  const days = [];
+  const totalDays = daysInMonth(year, month);
+  const startDay = firstDayOfMonth(year, month);
+  
+  // Previous month days
+  const prevMonthDays = daysInMonth(year, month - 1);
+  for (let i = startDay - 1; i >= 0; i--) {
+    days.push({ day: prevMonthDays - i, currentMonth: false, date: new Date(year, month - 1, prevMonthDays - i) });
+  }
+  
+  // Current month days
+  for (let i = 1; i <= totalDays; i++) {
+    days.push({ day: i, currentMonth: true, date: new Date(year, month, i) });
+  }
+  
+  // Next month days
+  const remainingDays = 42 - days.length;
+  for (let i = 1; i <= remainingDays; i++) {
+    days.push({ day: i, currentMonth: false, date: new Date(year, month + 1, i) });
+  }
+
+  const monthNames = [
+    "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+    "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
+  ];
+
+  const nextMonth = () => setCurrentDate(new Date(year, month + 1, 1));
+  const prevMonth = () => setCurrentDate(new Date(year, month - 1, 1));
+
+  return (
+    <div className="h-full flex flex-col bg-white/90 dark:bg-slate-900/90 backdrop-blur-md rounded-3xl shadow-2xl border border-white/20 dark:border-slate-800/50 overflow-hidden">
+      <div className="p-6 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <h2 className="text-2xl font-bold text-slate-900 dark:text-white">
+            {monthNames[month]} <span className="text-slate-400 font-medium">{year}</span>
+          </h2>
+          <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+            <button onClick={prevMonth} className="p-2 hover:bg-white dark:hover:bg-slate-700 rounded-lg transition-all">
+              <ChevronLeft className="w-5 h-5 text-slate-600 dark:text-slate-300" />
+            </button>
+            <button onClick={nextMonth} className="p-2 hover:bg-white dark:hover:bg-slate-700 rounded-lg transition-all">
+              <ChevronLeft className="w-5 h-5 text-slate-600 dark:text-slate-300 rotate-180" />
+            </button>
+          </div>
+        </div>
+        <button 
+          onClick={() => setCurrentDate(new Date())}
+          className="px-4 py-2 bg-versus text-white text-sm font-bold rounded-xl hover:bg-versus/90 transition-all active:scale-95"
+        >
+          Hoje
+        </button>
+      </div>
+      
+      <div className="flex-1 grid grid-cols-7 grid-rows-6">
+        {["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"].map(day => (
+          <div key={day} className="p-4 text-center text-xs font-bold text-slate-400 uppercase tracking-wider border-b border-slate-100 dark:border-slate-800">
+            {day}
+          </div>
+        ))}
+        {days.map((d, i) => {
+          const dayCards = cards.filter(card => {
+            if (!card.dueDate) return false;
+            const cardDate = card.dueDate.toDate();
+            return cardDate.getDate() === d.day && 
+                   cardDate.getMonth() === d.date.getMonth() && 
+                   cardDate.getFullYear() === d.date.getFullYear();
+          });
+          
+          const isToday = new Date().toDateString() === d.date.toDateString();
+          
+          return (
+            <div 
+              key={i} 
+              onClick={() => onDayClick(d.date)}
+              className={cn(
+                "p-2 border-r border-b border-slate-100 dark:border-slate-800 flex flex-col gap-1 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer group/day",
+                !d.currentMonth && "bg-slate-50/50 dark:bg-slate-950/20 opacity-40",
+                i % 7 === 6 && "border-r-0"
+              )}
+            >
+              <div className="flex items-center justify-between mb-1">
+                <span className={cn(
+                  "text-xs font-bold w-6 h-6 flex items-center justify-center rounded-full",
+                  isToday ? "bg-versus text-white shadow-lg shadow-versus/30" : "text-slate-500 dark:text-slate-400"
+                )}>
+                  {d.day}
+                </span>
+                <Plus className="w-3 h-3 text-slate-300 opacity-0 group-hover/day:opacity-100 transition-opacity" />
+              </div>
+              <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-1">
+                {dayCards.map(card => (
+                  <div 
+                    key={card.id}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onCardClick(card);
+                    }}
+                    className={cn(
+                      "text-[10px] p-1.5 rounded-lg border shadow-sm cursor-pointer transition-all hover:scale-105",
+                      card.urgency === 'high' ? "bg-rose-50 border-rose-100 text-rose-700" :
+                      card.urgency === 'medium' ? "bg-amber-50 border-amber-100 text-amber-700" :
+                      "bg-blue-50 border-blue-100 text-blue-700"
+                    )}
+                  >
+                    <div className="font-bold truncate">{card.title}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -215,6 +342,12 @@ export default function App() {
   const [editingListId, setEditingListId] = useState<string | null>(null);
   const [editingListName, setEditingListName] = useState('');
   const [listToDeleteId, setListToDeleteId] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<'board' | 'calendar'>('board');
+  const [newCardDueDate, setNewCardDueDate] = useState<string>('');
+  const [reminders, setReminders] = useState<Card[]>([]);
+  const [showCalendarAddModal, setShowCalendarAddModal] = useState(false);
+  const [calendarSelectedDate, setCalendarSelectedDate] = useState<Date | null>(null);
+  const [calendarSelectedListId, setCalendarSelectedListId] = useState<string>('');
   const isInitializingRef = React.useRef(false);
   const hasCleanedUpRef = React.useRef(false);
   const lastUserUidRef = React.useRef<string | null>(null);
@@ -677,10 +810,10 @@ export default function App() {
     }
   };
 
-  const addCard = async (listId: string, title: string, urgency: 'low' | 'medium' | 'high' = 'low', isRecurrent: boolean = false) => {
+  const addCard = async (listId: string, title: string, urgency: 'low' | 'medium' | 'high' = 'low', isRecurrent: boolean = false, dueDate?: string) => {
     if (!activeBoardId) return;
     const listCards = cards.filter(c => c.listId === listId);
-    await addDoc(collection(db, `boards/${activeBoardId}/cards`), {
+    const cardData: any = {
       title,
       description: '',
       listId,
@@ -692,12 +825,36 @@ export default function App() {
       urgency,
       isRecurrent,
       createdAt: Timestamp.now()
-    });
+    };
+    
+    if (dueDate) {
+      cardData.dueDate = Timestamp.fromDate(new Date(dueDate));
+    }
+
+    await addDoc(collection(db, `boards/${activeBoardId}/cards`), cardData);
     setAddingCardToList(null);
     setNewCardTitle('');
     setNewCardUrgency('low');
     setNewCardIsRecurrent(false);
+    setNewCardDueDate('');
   };
+
+  // Check for reminders
+  useEffect(() => {
+    if (!cards.length) return;
+    
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const dueToday = cards.filter(card => {
+      if (!card.dueDate) return false;
+      const dueDate = card.dueDate.toDate();
+      dueDate.setHours(0, 0, 0, 0);
+      return dueDate.getTime() === today.getTime();
+    });
+    
+    setReminders(dueToday);
+  }, [cards]);
 
   const handleLogOut = async () => {
     try {
@@ -1299,6 +1456,30 @@ export default function App() {
       <div className="bg-black/10 backdrop-blur-sm h-12 flex items-center justify-between px-6 shrink-0">
         <div className="flex items-center gap-4">
           <h2 className="text-white font-bold text-lg">{activeBoard?.name || 'Selecione um Setor'}</h2>
+          
+          <div className="flex items-center gap-1 bg-white/10 p-1 rounded-lg ml-2">
+            <button 
+              onClick={() => setViewMode('board')}
+              className={cn(
+                "px-3 py-1 rounded-md text-xs font-bold transition-all flex items-center gap-1.5",
+                viewMode === 'board' ? "bg-white text-slate-900 shadow-sm" : "text-white/60 hover:text-white"
+              )}
+            >
+              <Layout className="w-3.5 h-3.5" />
+              Quadro
+            </button>
+            <button 
+              onClick={() => setViewMode('calendar')}
+              className={cn(
+                "px-3 py-1 rounded-md text-xs font-bold transition-all flex items-center gap-1.5",
+                viewMode === 'calendar' ? "bg-white text-slate-900 shadow-sm" : "text-white/60 hover:text-white"
+              )}
+            >
+              <Calendar className="w-3.5 h-3.5" />
+              Agenda
+            </button>
+          </div>
+
           <button className="text-white/60 hover:text-white p-1.5 rounded-md hover:bg-white/10">
             <Settings className="w-4 h-4" />
           </button>
@@ -1324,17 +1505,40 @@ export default function App() {
       </div>
 
       {/* Kanban Area */}
-      <main className="flex-1 overflow-x-auto overflow-y-hidden p-6 custom-scrollbar">
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={activeBoardId}
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -20 }}
-            transition={{ duration: 0.3, ease: "easeOut" }}
-            className="h-full"
+      <main className="flex-1 overflow-x-auto overflow-y-hidden p-6 custom-scrollbar relative">
+        {reminders.length > 0 && (
+          <motion.div 
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="absolute top-4 right-6 z-50 bg-amber-50 dark:bg-amber-900/40 border border-amber-200 dark:border-amber-800 p-4 rounded-2xl shadow-xl backdrop-blur-md max-w-xs"
           >
-            <div className="flex gap-4 h-full items-start">
+            <div className="flex items-center gap-2 mb-2">
+              <AlertCircle className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+              <h3 className="font-bold text-amber-900 dark:text-amber-100 text-sm">Lembrete de Hoje</h3>
+              <button onClick={() => setReminders([])} className="ml-auto text-amber-400 hover:text-amber-600">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="space-y-2">
+              {reminders.map(card => (
+                <div key={card.id} className="text-xs text-amber-800 dark:text-amber-200 bg-white/50 dark:bg-black/20 p-2 rounded-lg">
+                  {card.title}
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        )}
+
+        <AnimatePresence mode="wait">
+          {viewMode === 'board' ? (
+            <motion.div
+              key="board"
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.98 }}
+              transition={{ duration: 0.2 }}
+              className="h-full flex gap-4 items-start"
+            >
               {lists.map((list) => (
                 <div
                   key={list.id}
@@ -1458,7 +1662,7 @@ export default function App() {
                           onChange={(e) => setNewCardTitle(e.target.value)}
                           onKeyDown={(e) => {
                             if (e.key === 'Enter' && newCardTitle) {
-                              addCard(list.id, newCardTitle, newCardUrgency, newCardIsRecurrent);
+                              addCard(list.id, newCardTitle, newCardUrgency, newCardIsRecurrent, newCardDueDate);
                             } else if (e.key === 'Escape') {
                               setAddingCardToList(null);
                             }
@@ -1466,6 +1670,16 @@ export default function App() {
                           className="w-full bg-slate-50 dark:bg-slate-900 border-none rounded-lg p-2 text-sm outline-none focus:ring-2 focus:ring-versus/50"
                         />
                         
+                        <div className="flex items-center gap-2 px-1">
+                          <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                          <input 
+                            type="date"
+                            value={newCardDueDate}
+                            onChange={(e) => setNewCardDueDate(e.target.value)}
+                            className="bg-transparent text-[10px] font-bold outline-none border-none text-slate-500 dark:text-slate-400 cursor-pointer"
+                          />
+                        </div>
+
                         <div className="flex items-center justify-between gap-2">
                           <div className="flex items-center gap-1">
                             <button
@@ -1513,7 +1727,7 @@ export default function App() {
                         <div className="flex items-center gap-2">
                           <button
                             onClick={() => {
-                              if (newCardTitle) addCard(list.id, newCardTitle, newCardUrgency, newCardIsRecurrent);
+                              if (newCardTitle) addCard(list.id, newCardTitle, newCardUrgency, newCardIsRecurrent, newCardDueDate);
                             }}
                             className="flex-1 bg-versus text-white py-1.5 rounded-lg text-xs font-bold shadow-lg shadow-versus/20"
                           >
@@ -1583,8 +1797,28 @@ export default function App() {
                   Adicionar outra lista
                 </button>
               )}
-            </div>
-          </motion.div>
+            </motion.div>
+          ) : (
+            <motion.div
+              key="calendar"
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.98 }}
+              transition={{ duration: 0.2 }}
+              className="h-full"
+            >
+              <CalendarView 
+                cards={cards} 
+                onCardClick={(card) => setMovingCardId(card.id)} 
+                onDayClick={(date) => {
+                  setCalendarSelectedDate(date);
+                  setNewCardDueDate(date.toISOString().split('T')[0]);
+                  if (lists.length > 0) setCalendarSelectedListId(lists[0].id);
+                  setShowCalendarAddModal(true);
+                }}
+              />
+            </motion.div>
+          )}
         </AnimatePresence>
       </main>
 
@@ -1687,6 +1921,121 @@ export default function App() {
                     )
                   )}
                 </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Calendar Add Modal */}
+      <AnimatePresence>
+        {showCalendarAddModal && (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center p-6">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowCalendarAddModal(false)}
+              className="absolute inset-0 bg-slate-950/60 backdrop-blur-md"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white dark:bg-slate-900 rounded-[2.5rem] shadow-2xl border border-white dark:border-slate-800 overflow-hidden w-full max-w-md relative z-10"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="p-8 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-3 bg-versus/10 rounded-2xl text-versus">
+                    <Calendar className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-bold text-slate-900 dark:text-white">Agendar Demanda</h3>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      {calendarSelectedDate?.toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', year: 'numeric' })}
+                    </p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setShowCalendarAddModal(false)}
+                  className="p-2 text-slate-400 hover:text-rose-500 transition-colors"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+              
+              <div className="p-8 space-y-6">
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-slate-400 uppercase tracking-wider px-1">Título da Tarefa</label>
+                  <input
+                    autoFocus
+                    type="text"
+                    placeholder="O que precisa ser feito?"
+                    value={newCardTitle}
+                    onChange={(e) => setNewCardTitle(e.target.value)}
+                    className="w-full bg-slate-50 dark:bg-slate-800 border-none rounded-2xl p-4 text-sm font-medium outline-none focus:ring-2 focus:ring-versus/50 transition-all"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-slate-400 uppercase tracking-wider px-1">Etapa / Lista</label>
+                    <select 
+                      value={calendarSelectedListId}
+                      onChange={(e) => setCalendarSelectedListId(e.target.value)}
+                      className="w-full bg-slate-50 dark:bg-slate-800 border-none rounded-2xl p-4 text-sm font-medium outline-none focus:ring-2 focus:ring-versus/50 transition-all appearance-none cursor-pointer"
+                    >
+                      {lists.map(list => (
+                        <option key={list.id} value={list.id}>{list.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-slate-400 uppercase tracking-wider px-1">Urgência</label>
+                    <select 
+                      value={newCardUrgency}
+                      onChange={(e) => setNewCardUrgency(e.target.value as any)}
+                      className="w-full bg-slate-50 dark:bg-slate-800 border-none rounded-2xl p-4 text-sm font-medium outline-none focus:ring-2 focus:ring-versus/50 transition-all appearance-none cursor-pointer"
+                    >
+                      <option value="low">Baixa</option>
+                      <option value="medium">Média</option>
+                      <option value="high">Alta</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-800 rounded-2xl">
+                  <div className="flex items-center gap-3">
+                    <Repeat className={cn("w-5 h-5", newCardIsRecurrent ? "text-blue-500" : "text-slate-400")} />
+                    <span className="text-sm font-bold text-slate-700 dark:text-slate-200">Tarefa Recorrente</span>
+                  </div>
+                  <button 
+                    onClick={() => setNewCardIsRecurrent(!newCardIsRecurrent)}
+                    className={cn(
+                      "w-12 h-6 rounded-full transition-all relative",
+                      newCardIsRecurrent ? "bg-blue-500" : "bg-slate-300 dark:bg-slate-700"
+                    )}
+                  >
+                    <div className={cn(
+                      "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
+                      newCardIsRecurrent ? "left-7" : "left-1"
+                    )} />
+                  </button>
+                </div>
+
+                <button
+                  onClick={async () => {
+                    if (newCardTitle && calendarSelectedListId) {
+                      await addCard(calendarSelectedListId, newCardTitle, newCardUrgency, newCardIsRecurrent, newCardDueDate);
+                      setShowCalendarAddModal(false);
+                    }
+                  }}
+                  className="w-full bg-versus text-white font-bold py-4 rounded-2xl shadow-xl shadow-versus/20 hover:bg-versus/90 transition-all active:scale-95 flex items-center justify-center gap-2"
+                >
+                  <Plus className="w-5 h-5" />
+                  Agendar Agora
+                </button>
               </div>
             </motion.div>
           </div>
