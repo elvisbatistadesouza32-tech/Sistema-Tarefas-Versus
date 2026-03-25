@@ -171,6 +171,15 @@ export class ErrorBoundary extends Component<{ children: React.ReactNode }, { ha
   }
 }
 
+const DEFAULT_SECTORS = [
+  { id: 'board_comercial', name: 'Comercial', background: 'bg-gradient-to-br from-sky-500 to-blue-700' },
+  { id: 'board_staff', name: 'Staff', background: 'bg-gradient-to-br from-fuchsia-600 to-purple-800' },
+  { id: 'board_gerencia', name: 'Gerencia', background: 'bg-slate-900' },
+  { id: 'board_enfermagem', name: 'Enfermagem', background: 'bg-gradient-to-br from-emerald-500 to-emerald-700' },
+  { id: 'board_tec_enf', name: 'Tec Enf.', background: 'bg-gradient-to-br from-cyan-600 to-cyan-800' },
+  { id: 'board_recepcao', name: 'Recepção', background: 'bg-gradient-to-br from-orange-500 to-orange-700' }
+];
+
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -189,7 +198,7 @@ export default function App() {
   const [creatingNewSector, setCreatingNewSector] = useState(false);
   const [newSectorName, setNewSectorName] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
-  const [showLanding, setShowLanding] = useState(true);
+  const [showLanding, setShowLanding] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
@@ -207,36 +216,52 @@ export default function App() {
   const [editingListName, setEditingListName] = useState('');
   const [listToDeleteId, setListToDeleteId] = useState<string | null>(null);
   const isInitializingRef = React.useRef(false);
-  const hasCleanedUpRef = React.useRef(false);
-
-  // Auth Listener
+  const hasCleanedUpRef = React.useRef(false);  // Auth Listener
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
       if (currentUser) {
+        // Fast path for admin check
+        const isAdminEmail = currentUser.email === "elvisbatistadesouza32@gmail.com";
+        
+        // Try to get role from cache for immediate UI response
+        const cachedRole = localStorage.getItem(`role_${currentUser.uid}`);
+        if (cachedRole) {
+          setIsAdmin(cachedRole === 'admin');
+          setIsAuthReady(true);
+        } else if (isAdminEmail) {
+          setIsAdmin(true);
+          // We still need to verify with Firestore, but we can set ready for now
+          setIsAuthReady(true);
+        }
+
         try {
-          // Sync user profile to Firestore
           const userRef = doc(db, 'users', currentUser.uid);
           const userSnap = await getDoc(userRef);
           
-          const isAdminEmail = currentUser.email === "elvisbatistadesouza32@gmail.com";
-          const role = userSnap.exists() ? (userSnap.data().role || (isAdminEmail ? 'admin' : 'user')) : (isAdminEmail ? 'admin' : 'user');
+          const role = userSnap.exists() 
+            ? (userSnap.data().role || (isAdminEmail ? 'admin' : 'user')) 
+            : (isAdminEmail ? 'admin' : 'user');
           
           setIsAdmin(role === 'admin');
+          localStorage.setItem(`role_${currentUser.uid}`, role);
+          setIsAuthReady(true);
 
-          await setDoc(userRef, {
+          // Sync profile in background
+          setDoc(userRef, {
             name: currentUser.displayName || 'Anonymous',
             email: currentUser.email || '',
             photoUrl: currentUser.photoURL || '',
             role: role
-          }, { merge: true });
+          }, { merge: true }).catch(err => console.error("Background sync error:", err));
         } catch (error) {
           console.error("Error syncing user profile:", error);
+          setIsAuthReady(true);
         }
       } else {
         setIsAdmin(false);
+        setIsAuthReady(true);
       }
-      setIsAuthReady(true);
     });
     return () => unsubscribe();
   }, []);
@@ -244,47 +269,53 @@ export default function App() {
   // Initialize Sectors and Bootstrap Boards
   useEffect(() => {
     const initializeApp = async () => {
-      if (!isAuthReady || !user || loadingBoards || isInitializingRef.current) return;
+      if (!isAuthReady || !user || isInitializingRef.current) return;
       isInitializingRef.current = true;
 
-      const defaultSectors = [
-        { id: 'board_comercial', name: 'Comercial', background: 'bg-gradient-to-br from-sky-500 to-blue-700' },
-        { id: 'board_staff', name: 'Staff', background: 'bg-gradient-to-br from-fuchsia-600 to-purple-800' },
-        { id: 'board_gerencia', name: 'Gerencia', background: 'bg-slate-900' },
-        { id: 'board_enfermagem', name: 'Enfermagem', background: 'bg-gradient-to-br from-emerald-500 to-emerald-700' },
-        { id: 'board_tec_enf', name: 'Tec Enf.', background: 'bg-gradient-to-br from-cyan-600 to-cyan-800' },
-        { id: 'board_recepcao', name: 'Recepção', background: 'bg-gradient-to-br from-orange-500 to-orange-700' }
-      ];
+      // For non-admins, we only need to initialize their specific department board
+      // This significantly reduces the number of Firestore calls on login
+      const sectorsToInit = isAdmin 
+        ? DEFAULT_SECTORS 
+        : DEFAULT_SECTORS.filter(s => s.name.toLowerCase() === user.displayName?.toLowerCase());
 
-      console.log('Starting deterministic initialization for user:', user.uid);
+      if (sectorsToInit.length === 0 && !isAdmin) {
+        isInitializingRef.current = false;
+        return;
+      }
+
+      console.log('Starting optimized initialization for user:', user.uid);
       
       try {
-        for (const sector of defaultSectors) {
+        await Promise.all(sectorsToInit.map(async (sector) => {
           const boardRef = doc(db, 'boards', sector.id);
           const boardSnap = await getDoc(boardRef);
 
           if (!boardSnap.exists()) {
             console.log(`Creating deterministic board: ${sector.name}`);
-            await setDoc(boardRef, {
+            const batch = writeBatch(db);
+            
+            batch.set(boardRef, {
               name: sector.name,
               ownerId: 'system',
               members: [user.uid],
               background: sector.background,
               createdAt: serverTimestamp()
-            }).catch(err => handleFirestoreError(err, OperationType.CREATE, `boards/${sector.id}`));
+            });
 
-            // Add default lists
+            // Add default lists in batch
             const defaultLists = ['DEMANDAS', 'EM ANDAMENTO', 'FINALIZADAS'];
-            for (let i = 0; i < defaultLists.length; i++) {
-              await addDoc(collection(db, `boards/${sector.id}/lists`), {
-                name: defaultLists[i],
+            defaultLists.forEach((listName, i) => {
+              const listRef = doc(collection(db, `boards/${sector.id}/lists`));
+              batch.set(listRef, {
+                name: listName,
                 boardId: sector.id,
                 order: i,
                 createdAt: serverTimestamp()
-              }).catch(err => handleFirestoreError(err, OperationType.CREATE, `boards/${sector.id}/lists`));
-            }
+              });
+            });
+
+            await batch.commit();
           } else {
-            // Ensure user is a member and background is correct
             const data = boardSnap.data();
             const currentMembers = data.members || [];
             const updates: any = {};
@@ -293,23 +324,26 @@ export default function App() {
               updates.members = [...currentMembers, user.uid];
             }
             
-            // Force update background if it's missing or legacy
             if (!data.background || data.background === 'bg-versus' || data.background.includes('slate')) {
               updates.background = sector.background;
             }
 
             if (Object.keys(updates).length > 0) {
-              await updateDoc(boardRef, updates).catch(err => handleFirestoreError(err, OperationType.UPDATE, `boards/${sector.id}`));
+              await updateDoc(boardRef, updates);
             }
           }
-        }
+        }));
+        console.log('Initialization finished.');
       } catch (error: any) {
-        console.error('Error during deterministic initialization:', error);
+        console.error('Error during optimized initialization:', error);
+      } finally {
+        // We keep isInitializingRef.current = true to prevent re-running in the same session
+        // unless it's a critical failure, but usually one successful run is enough.
       }
     };
 
     initializeApp();
-  }, [isAdmin, user, isAuthReady, loadingBoards]);
+  }, [isAdmin, user, isAuthReady]);
 
   // Global Cleanup for Duplicates (Admin only)
   useEffect(() => {
@@ -380,21 +414,33 @@ export default function App() {
       ? query(collection(db, 'boards'), orderBy('createdAt', 'desc'))
       : query(
           collection(db, 'boards'),
-          where('members', 'array-contains', user.uid),
-          orderBy('createdAt', 'desc')
+          where('members', 'array-contains', user.uid)
+          // Removed orderBy for non-admins to avoid index requirement and speed up query
         );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const boardsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Board));
-      setBoards(boardsData);
+      
+      // Filter boards for non-admins to only show their department board
+      let finalBoards = boardsData;
+      if (!isAdmin && user.displayName) {
+        finalBoards = boardsData.filter(b => b.name.toLowerCase() === user.displayName?.toLowerCase());
+      }
+      
+      setBoards(finalBoards);
       setLoadingBoards(false);
+
+      // Auto-select board if user only has one and it's their department
+      if (!isAdmin && finalBoards.length === 1 && !activeBoardId) {
+        setActiveBoardId(finalBoards[0].id);
+      }
     }, (error) => {
       handleFirestoreError(error, OperationType.GET, 'boards');
       setLoadingBoards(false);
     });
 
     return () => unsubscribe();
-  }, [user, isAuthReady, isAdmin]);
+  }, [user, isAuthReady, isAdmin, activeBoardId]);
 
   // Lists & Cards Listener
   useEffect(() => {
@@ -640,7 +686,7 @@ export default function App() {
     
     // Create a unique email for each department to ensure separate sessions
     // Using a fixed password for all departments for simplicity as requested
-    const deptEmail = `${deptName.toLowerCase().replace(/\s+/g, '')}.versus@clinica.com`;
+    const deptEmail = `${deptName.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, '')}.versus@clinica.com`;
     const sharedPass = 'clinica123';
 
     try {
@@ -662,6 +708,12 @@ export default function App() {
         await updateProfile(userCredential.user, {
           displayName: deptName
         });
+        
+        // Pre-set active board ID for immediate transition
+        const sector = DEFAULT_SECTORS.find(s => s.name === deptName);
+        if (sector) {
+          setActiveBoardId(sector.id);
+        }
         setUser({ ...userCredential.user, displayName: deptName });
       }
     } catch (error: any) {
@@ -766,17 +818,17 @@ export default function App() {
 
           {/* Quick Access: Departments Only */}
           <div className="grid grid-cols-2 gap-4">
-            {['Comercial', 'Staff', 'Gerencia', 'Enfermagem', 'Tec Enf.', 'Recepção'].map((dept) => (
+            {DEFAULT_SECTORS.map((sector) => (
               <button
-                key={dept}
-                onClick={() => handleDepartmentSignIn(dept)}
+                key={sector.id}
+                onClick={() => handleDepartmentSignIn(sector.name)}
                 disabled={isSigningIn}
                 className="bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 p-6 rounded-[2rem] text-slate-700 dark:text-slate-200 font-bold text-base hover:border-versus hover:bg-versus/5 hover:text-versus transition-all active:scale-95 disabled:opacity-50 flex flex-col items-center justify-center gap-2 shadow-sm"
               >
                 <div className="w-10 h-10 rounded-full bg-versus/10 flex items-center justify-center">
-                  <span className="text-versus text-lg">{dept[0]}</span>
+                  <span className="text-versus text-lg">{sector.name[0]}</span>
                 </div>
-                {dept}
+                {sector.name}
               </button>
             ))}
           </div>
@@ -849,7 +901,7 @@ export default function App() {
     );
   }
 
-  if (user && showLanding) {
+  if (user && showLanding && isAdmin) {
     return (
       <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col transition-colors">
         {/* Simple Header for Landing */}
@@ -958,12 +1010,14 @@ export default function App() {
       <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center p-6">
         <div className="max-w-2xl w-full">
           <div className="flex items-center gap-4 mb-8">
-            <button 
-              onClick={() => setShowLanding(true)}
-              className="p-2 rounded-full hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-500 transition-all"
-            >
-              <ArrowLeft className="w-6 h-6" />
-            </button>
+            {isAdmin && (
+              <button 
+                onClick={() => setShowLanding(true)}
+                className="p-2 rounded-full hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-500 transition-all"
+              >
+                <ArrowLeft className="w-6 h-6" />
+              </button>
+            )}
             <h1 className="text-3xl font-bold text-slate-900 dark:text-white">Seus Processos</h1>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
@@ -1004,12 +1058,14 @@ export default function App() {
   if (!activeBoardId) {
     return (
       <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center p-6">
-        <button 
-          onClick={() => setShowLanding(true)}
-          className="absolute top-8 left-8 p-3 rounded-full bg-white dark:bg-slate-900 shadow-md text-slate-500 hover:text-versus transition-all"
-        >
-          <ArrowLeft className="w-6 h-6" />
-        </button>
+        {isAdmin && (
+          <button 
+            onClick={() => setShowLanding(true)}
+            className="absolute top-8 left-8 p-3 rounded-full bg-white dark:bg-slate-900 shadow-md text-slate-500 hover:text-versus transition-all"
+          >
+            <ArrowLeft className="w-6 h-6" />
+          </button>
+        )}
         <motion.div 
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -1039,7 +1095,14 @@ export default function App() {
       <header className="bg-black/20 backdrop-blur-md border-b border-white/10 h-14 flex items-center justify-between px-4 shrink-0">
         <div className="flex items-center gap-4">
           <button 
-            onClick={() => setShowLanding(true)}
+            onClick={() => {
+              if (isAdmin) {
+                setActiveBoardId(null);
+                setShowLanding(true);
+              } else {
+                setActiveBoardId(null);
+              }
+            }}
             className="hover:opacity-80 transition-opacity"
           >
             <Logo dark className="scale-75 origin-left" />
@@ -1049,7 +1112,14 @@ export default function App() {
           
           <div className="flex items-center gap-2">
             <button 
-              onClick={() => setShowLanding(true)}
+              onClick={() => {
+                if (isAdmin) {
+                  setActiveBoardId(null);
+                  setShowLanding(true);
+                } else {
+                  setActiveBoardId(null);
+                }
+              }}
               className="bg-white/20 hover:bg-white/30 text-white px-3 py-1.5 rounded-md text-sm font-medium transition-colors flex items-center gap-2"
             >
               <Layout className="w-4 h-4" />
