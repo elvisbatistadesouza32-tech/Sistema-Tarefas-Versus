@@ -245,8 +245,9 @@ const CalendarView = ({ cards, onCardClick, onDayClick }: { cards: Card[], onCar
         </button>
       </div>
       
-      <div className="flex-1 grid grid-cols-7 grid-rows-6">
-        {["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"].map(day => (
+      <div className="flex-1 overflow-auto custom-scrollbar">
+        <div className="min-w-[800px] h-full grid grid-cols-7 grid-rows-6">
+          {["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"].map(day => (
           <div key={day} className="p-4 text-center text-xs font-bold text-slate-400 uppercase tracking-wider border-b border-slate-100 dark:border-slate-800">
             {day}
           </div>
@@ -303,6 +304,7 @@ const CalendarView = ({ cards, onCardClick, onDayClick }: { cards: Card[], onCar
             </div>
           );
         })}
+        </div>
       </div>
     </div>
   );
@@ -1527,7 +1529,7 @@ export default function App() {
       </div>
 
       {/* Kanban Area */}
-      <main className="flex-1 overflow-x-auto overflow-y-hidden p-6 custom-scrollbar relative">
+      <main className="flex-1 overflow-x-auto overflow-y-hidden p-4 md:p-6 custom-scrollbar relative snap-x snap-mandatory scroll-smooth">
         <AnimatePresence mode="wait">
           {viewMode === 'board' ? (
             <motion.div
@@ -1536,14 +1538,14 @@ export default function App() {
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.98 }}
               transition={{ duration: 0.2 }}
-              className="h-full flex gap-4 items-start"
+              className="h-full flex gap-4 md:gap-6 items-start"
             >
               {lists.map((list) => (
                 <div
                   key={list.id}
-                  className="w-72 bg-slate-100/90 dark:bg-slate-900/90 backdrop-blur-md rounded-2xl flex flex-col max-h-full shrink-0 shadow-lg border border-white/20 dark:border-slate-800/50 transition-all duration-300"
+                  className="w-[85vw] sm:w-80 bg-slate-100/90 dark:bg-slate-900/90 backdrop-blur-md rounded-[2rem] flex flex-col max-h-full shrink-0 shadow-xl border border-white/20 dark:border-slate-800/50 transition-all duration-300 snap-center"
                 >
-                  <div className="p-4 flex items-center justify-between group">
+                  <div className="p-5 flex items-center justify-between group">
                     {editingListId === list.id ? (
                       <div className="flex-1 flex items-center gap-2">
                         <input
@@ -1589,24 +1591,24 @@ export default function App() {
                         <div
                           key={card.id}
                           onClick={() => setMovingCardId(card.id)}
-                          className="bg-white dark:bg-slate-800 p-3 rounded-xl shadow-sm mb-2 border border-slate-200 dark:border-slate-700 hover:border-blue-500 group select-none relative hover:shadow-md transition-all duration-200 cursor-pointer"
+                          className="bg-white dark:bg-slate-800 p-4 rounded-2xl shadow-sm mb-3 border border-slate-200 dark:border-slate-700 hover:border-blue-500 group select-none relative hover:shadow-md transition-all duration-200 cursor-pointer active:scale-[0.98]"
                         >
                           {card.labels.length > 0 && (
-                            <div className="flex flex-wrap gap-1 mb-2">
+                            <div className="flex flex-wrap gap-1.5 mb-2.5">
                               {card.labels.map(label => (
-                                <div key={label.id} className={cn("h-1.5 w-8 rounded-full", label.color)}></div>
+                                <div key={label.id} className={cn("h-2 w-10 rounded-full", label.color)}></div>
                               ))}
                             </div>
                           )}
                           {card.urgency && card.urgency !== 'low' && (
                             <div className={cn(
-                              "h-1 w-12 rounded-full mb-2",
+                              "h-1.5 w-14 rounded-full mb-2.5",
                               card.urgency === 'high' ? "bg-rose-500" : "bg-amber-500"
                             )}></div>
                           )}
-                          <div className="flex items-center justify-between mb-2">
-                            <h4 className="text-sm font-medium text-slate-900 dark:text-white pr-6">{card.title}</h4>
-                            <div className="absolute top-3 right-3 flex items-center gap-1.5">
+                          <div className="flex items-center justify-between mb-3">
+                            <h4 className="text-base font-bold text-slate-900 dark:text-white pr-8 leading-tight">{card.title}</h4>
+                            <div className="absolute top-4 right-4 flex items-center gap-2">
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -1614,47 +1616,55 @@ export default function App() {
                                     deleteCard(card.id);
                                   }
                                 }}
-                                className="p-1 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-md text-slate-300 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all"
+                                className="p-1.5 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-lg text-slate-300 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all md:block hidden"
                                 title="Excluir tarefa"
                               >
-                                <Trash2 className="w-3.5 h-3.5" />
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                              {/* Mobile Delete Icon - Always visible on small screens */}
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (window.confirm('Excluir esta tarefa?')) {
+                                    deleteCard(card.id);
+                                  }
+                                }}
+                                className="p-1.5 bg-rose-50 dark:bg-rose-900/20 rounded-lg text-rose-500 md:hidden block"
+                              >
+                                <Trash2 className="w-4 h-4" />
                               </button>
                               <div
-                                className="p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-md text-slate-400 group-hover:text-blue-500 transition-colors"
+                                className="p-1.5 bg-slate-50 dark:bg-slate-700/50 rounded-lg text-slate-400 group-hover:text-blue-500 transition-colors"
                                 title="Mover tarefa"
                               >
-                                <ArrowRightLeft className="w-3.5 h-3.5" />
+                                <ArrowRightLeft className="w-4 h-4" />
                               </div>
-                              {card.isRecurrent && (
-                                <Repeat className="w-3 h-3 text-blue-500" />
-                              )}
-                              {card.urgency === 'high' && (
-                                <Zap className="w-3 h-3 text-rose-500 fill-rose-500" />
-                              )}
-                              {card.urgency === 'medium' && (
-                                <Zap className="w-3 h-3 text-amber-500 fill-amber-500" />
-                              )}
                             </div>
                           </div>
                           
-                          <div className="flex items-center gap-3 text-slate-400">
-                            {card.description && <div className="flex items-center gap-1"><MoreHorizontal className="w-3 h-3" /></div>}
+                          <div className="flex items-center flex-wrap gap-3 text-slate-400">
+                            {card.isRecurrent && (
+                              <div className="flex items-center gap-1.5 text-[11px] font-bold text-blue-500 bg-blue-50 dark:bg-blue-900/20 px-2 py-0.5 rounded-full">
+                                <Repeat className="w-3.5 h-3.5" />
+                                <span>Recorrente</span>
+                              </div>
+                            )}
+                            {card.urgency === 'high' && (
+                              <div className="flex items-center gap-1.5 text-[11px] font-bold text-rose-500 bg-rose-50 dark:bg-rose-900/20 px-2 py-0.5 rounded-full">
+                                <Zap className="w-3.5 h-3.5 fill-rose-500" />
+                                <span>Urgente</span>
+                              </div>
+                            )}
                             {card.checklist.length > 0 && (
-                              <div className="flex items-center gap-1 text-[10px] font-bold">
-                                <CheckSquare className="w-3 h-3" />
+                              <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 bg-slate-100 dark:bg-slate-700 px-2 py-0.5 rounded-full">
+                                <CheckSquare className="w-3.5 h-3.5" />
                                 {card.checklist.filter(i => i.completed).length}/{card.checklist.length}
                               </div>
                             )}
                             {card.dueDate && (
-                              <div className="flex items-center gap-1 text-[10px] font-bold text-rose-500">
-                                <Clock className="w-3 h-3" />
-                                {card.dueDate.toDate().toLocaleDateString()}
-                              </div>
-                            )}
-                            {card.isRecurrent && (
-                              <div className="flex items-center gap-1 text-[10px] font-bold text-blue-500">
-                                <Repeat className="w-3 h-3" />
-                                Recorrente
+                              <div className="flex items-center gap-1.5 text-[11px] font-bold text-rose-500 bg-rose-50 dark:bg-rose-900/20 px-2 py-0.5 rounded-full ml-auto">
+                                <Clock className="w-3.5 h-3.5" />
+                                {card.dueDate.toDate().toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}
                               </div>
                             )}
                           </div>
@@ -1662,9 +1672,9 @@ export default function App() {
                       ))}
                   </div>
 
-                  <div className="p-2">
+                  <div className="p-3">
                     {addingCardToList === list.id ? (
-                      <div className="bg-white dark:bg-slate-800 p-3 rounded-xl shadow-lg border border-slate-200 dark:border-slate-700 space-y-3">
+                      <div className="bg-white dark:bg-slate-800 p-4 rounded-2xl shadow-lg border border-slate-200 dark:border-slate-700 space-y-4">
                         <input
                           autoFocus
                           type="text"
@@ -1678,16 +1688,16 @@ export default function App() {
                               setAddingCardToList(null);
                             }
                           }}
-                          className="w-full bg-slate-50 dark:bg-slate-900 border-none rounded-lg p-2 text-sm outline-none focus:ring-2 focus:ring-versus/50"
+                          className="w-full bg-slate-50 dark:bg-slate-900 border-none rounded-xl p-3 text-sm font-medium outline-none focus:ring-2 focus:ring-versus/50"
                         />
                         
                         <div className="flex items-center gap-2 px-1">
-                          <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                          <Calendar className="w-4 h-4 text-slate-400" />
                           <input 
                             type="date"
                             value={newCardDueDate}
                             onChange={(e) => setNewCardDueDate(e.target.value)}
-                            className="bg-transparent text-[10px] font-bold outline-none border-none text-slate-500 dark:text-slate-400 cursor-pointer"
+                            className="bg-transparent text-xs font-bold outline-none border-none text-slate-500 dark:text-slate-400 cursor-pointer"
                           />
                         </div>
 
@@ -1696,7 +1706,7 @@ export default function App() {
                             <button
                               onClick={() => setNewCardUrgency('low')}
                               className={cn(
-                                "px-2 py-1 rounded text-[10px] font-bold transition-all",
+                                "px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all",
                                 newCardUrgency === 'low' ? "bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300" : "text-slate-400 hover:text-slate-600"
                               )}
                             >
@@ -1705,7 +1715,7 @@ export default function App() {
                             <button
                               onClick={() => setNewCardUrgency('medium')}
                               className={cn(
-                                "px-2 py-1 rounded text-[10px] font-bold transition-all",
+                                "px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all",
                                 newCardUrgency === 'medium' ? "bg-amber-100 text-amber-700" : "text-slate-400 hover:text-slate-600"
                               )}
                             >
@@ -1714,7 +1724,7 @@ export default function App() {
                             <button
                               onClick={() => setNewCardUrgency('high')}
                               className={cn(
-                                "px-2 py-1 rounded text-[10px] font-bold transition-all",
+                                "px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all",
                                 newCardUrgency === 'high' ? "bg-rose-100 text-rose-700" : "text-slate-400 hover:text-slate-600"
                               )}
                             >
@@ -1725,39 +1735,39 @@ export default function App() {
                           <button
                             onClick={() => setNewCardIsRecurrent(!newCardIsRecurrent)}
                             className={cn(
-                              "p-1.5 rounded-lg transition-all flex items-center gap-1 text-[10px] font-bold",
+                              "p-2 rounded-xl transition-all flex items-center gap-2 text-[10px] font-black uppercase tracking-wider",
                               newCardIsRecurrent ? "bg-blue-100 text-blue-700" : "text-slate-400 hover:text-slate-600"
                             )}
                             title="Tarefa Recorrente"
                           >
-                            <Repeat className="w-3 h-3" />
+                            <Repeat className="w-4 h-4" />
                             {newCardIsRecurrent && <span>Recorrente</span>}
                           </button>
                         </div>
 
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 pt-2">
                           <button
                             onClick={() => {
                               if (newCardTitle) addCard(list.id, newCardTitle, newCardUrgency, newCardIsRecurrent, newCardDueDate);
                             }}
-                            className="flex-1 bg-versus text-white py-1.5 rounded-lg text-xs font-bold shadow-lg shadow-versus/20"
+                            className="flex-1 bg-versus text-white py-3 rounded-xl text-sm font-black shadow-xl shadow-versus/20 active:scale-95 transition-all"
                           >
                             Adicionar
                           </button>
                           <button
                             onClick={() => setAddingCardToList(null)}
-                            className="p-1.5 text-slate-400 hover:text-slate-600"
+                            className="p-3 text-slate-400 hover:text-rose-500 transition-colors"
                           >
-                            <X className="w-4 h-4" />
+                            <X className="w-5 h-5" />
                           </button>
                         </div>
                       </div>
                     ) : (
                       <button 
                         onClick={() => setAddingCardToList(list.id)}
-                        className="w-full flex items-center gap-2 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 p-2 rounded-lg text-sm font-medium transition-colors"
+                        className="w-full flex items-center justify-center gap-2 text-slate-500 dark:text-slate-400 bg-white/50 dark:bg-slate-800/50 hover:bg-white dark:hover:bg-slate-800 p-4 rounded-2xl text-sm font-bold transition-all border border-dashed border-slate-300 dark:border-slate-700 hover:border-blue-500"
                       >
-                        <Plus className="w-4 h-4" />
+                        <Plus className="w-5 h-5" />
                         Adicionar um cartão
                       </button>
                     )}
