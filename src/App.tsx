@@ -1298,14 +1298,6 @@ export default function App() {
       {/* Board Subheader */}
       <div className="bg-black/10 backdrop-blur-sm h-12 flex items-center justify-between px-6 shrink-0">
         <div className="flex items-center gap-4">
-          <button 
-            onClick={() => setActiveBoardId(null)}
-            className="text-white/80 hover:text-white flex items-center gap-1.5 bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg text-sm transition-all"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            <span>Voltar</span>
-          </button>
-          <div className="h-4 w-[1px] bg-white/20 mx-1"></div>
           <h2 className="text-white font-bold text-lg">{activeBoard?.name || 'Selecione um Setor'}</h2>
           <button className="text-white/60 hover:text-white p-1.5 rounded-md hover:bg-white/10">
             <Settings className="w-4 h-4" />
