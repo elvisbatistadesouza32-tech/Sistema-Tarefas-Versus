@@ -453,13 +453,36 @@ export default function App() {
         const userDept = user.displayName.trim().toLowerCase();
         finalBoards = boardsData.filter(b => b.name.trim().toLowerCase() === userDept);
       }
+
+      // Deduplicate boards by name to avoid showing multiple boards for the same sector
+      // This can happen if multiple boards were created manually or during initialization
+      const uniqueBoards: Board[] = [];
+      const seenNames = new Set<string>();
       
-      setBoards(finalBoards);
+      // Sort to prefer deterministic IDs (they start with 'board_')
+      const sortedBoards = [...finalBoards].sort((a, b) => {
+        const aIsDeterministic = a.id.startsWith('board_');
+        const bIsDeterministic = b.id.startsWith('board_');
+        if (aIsDeterministic && !bIsDeterministic) return -1;
+        if (!aIsDeterministic && bIsDeterministic) return 1;
+        // If both are same type, prefer the one with more members or newer
+        return (b.members?.length || 0) - (a.members?.length || 0);
+      });
+
+      for (const board of sortedBoards) {
+        const normalizedName = board.name.trim().toLowerCase();
+        if (!seenNames.has(normalizedName)) {
+          uniqueBoards.push(board);
+          seenNames.add(normalizedName);
+        }
+      }
+      
+      setBoards(uniqueBoards);
       setLoadingBoards(false);
 
       // Auto-select board if user only has one and it's their department
-      if (!isAdmin && finalBoards.length === 1 && !activeBoardId) {
-        setActiveBoardId(finalBoards[0].id);
+      if (!isAdmin && uniqueBoards.length === 1 && !activeBoardId) {
+        setActiveBoardId(uniqueBoards[0].id);
       }
     }, (error) => {
       handleFirestoreError(error, OperationType.GET, 'boards');
