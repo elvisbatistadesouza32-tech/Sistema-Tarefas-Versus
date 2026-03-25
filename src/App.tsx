@@ -72,6 +72,7 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [isAuthReady, setIsAuthReady] = useState(false);
+  const [showAdminLogin, setShowAdminLogin] = useState(false);
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [boards, setBoards] = useState<Board[]>([]);
@@ -486,15 +487,36 @@ export default function App() {
     if (isSigningIn) return;
     setIsSigningIn(true);
     setAuthError(null);
+    
+    // Create a unique email for each department to ensure separate sessions
+    // Using a fixed password for all departments for simplicity as requested
+    const deptEmail = `${deptName.toLowerCase().replace(/\s+/g, '')}.versus@clinica.com`;
+    const sharedPass = 'clinica123';
+
     try {
-      const userCredential = await signInAnonymously(auth);
-      await updateProfile(userCredential.user, {
-        displayName: deptName
-      });
-      setUser({ ...userCredential.user, displayName: deptName });
+      let userCredential;
+      try {
+        // Try to sign in first
+        userCredential = await signInWithEmailAndPassword(auth, deptEmail, sharedPass);
+      } catch (signInError: any) {
+        // If account doesn't exist, create it automatically
+        if (signInError.code === 'auth/user-not-found' || signInError.code === 'auth/invalid-credential') {
+          userCredential = await createUserWithEmailAndPassword(auth, deptEmail, sharedPass);
+        } else {
+          throw signInError;
+        }
+      }
+
+      // Update the display name to the selected department
+      if (userCredential) {
+        await updateProfile(userCredential.user, {
+          displayName: deptName
+        });
+        setUser({ ...userCredential.user, displayName: deptName });
+      }
     } catch (error: any) {
-      console.error('Department Sign In Error:', error);
-      setAuthError('Erro ao entrar como ' + deptName + '. Tente novamente.');
+      console.error('Department Access Error:', error);
+      setAuthError('Erro ao acessar o sistema. Por favor, tente novamente em alguns instantes.');
     } finally {
       setIsSigningIn(false);
     }
@@ -588,7 +610,6 @@ export default function App() {
           {authError && (
             <div className="mb-8 p-4 bg-rose-50 dark:bg-rose-900/20 text-rose-600 dark:text-rose-400 text-xs rounded-2xl border border-rose-100 dark:border-rose-800 text-center">
               {authError}
-              <p className="mt-2 text-[10px] opacity-70">Dica: Certifique-se de que o "Login Anônimo" está ativado no seu console Firebase.</p>
             </div>
           )}
 
@@ -608,6 +629,66 @@ export default function App() {
               </button>
             ))}
           </div>
+
+          <div className="mt-8 text-center">
+            <button
+              onClick={() => setShowAdminLogin(!showAdminLogin)}
+              className="text-xs text-slate-400 hover:text-versus transition-colors"
+            >
+              {showAdminLogin ? 'Voltar para setores' : 'Acesso Administrativo'}
+            </button>
+          </div>
+
+          {showAdminLogin && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              className="mt-6 pt-6 border-t border-slate-100 dark:border-slate-800 space-y-4 text-left"
+            >
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 ml-1">
+                  E-mail Admin
+                </label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="elvis@exemplo.com"
+                  className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border-none rounded-xl focus:ring-2 focus:ring-versus/20 transition-all outline-none text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 ml-1">
+                  Senha
+                </label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border-none rounded-xl focus:ring-2 focus:ring-versus/20 transition-all outline-none text-sm"
+                />
+              </div>
+              <button
+                onClick={() => handleSignIn()}
+                disabled={isSigningIn}
+                className="w-full py-3 bg-versus text-white rounded-xl font-bold text-sm shadow-lg shadow-versus/20 hover:bg-versus/90 transition-all disabled:opacity-50"
+              >
+                {isSigningIn ? 'Entrando...' : 'Entrar como Admin'}
+              </button>
+              <button
+                onClick={handleResetPassword}
+                className="w-full text-[10px] text-versus font-bold hover:underline text-center"
+              >
+                Esqueci minha senha
+              </button>
+              {resetEmailSent && (
+                <p className="text-[10px] text-emerald-600 text-center mt-2">
+                  Link de redefinição enviado!
+                </p>
+              )}
+            </motion.div>
+          )}
 
           <p className="mt-12 text-[10px] text-slate-400 dark:text-slate-600">
             Sistema de Gestão Interna - Clínica Versus
