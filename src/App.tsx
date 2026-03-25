@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, Component } from 'react';
 import { createPortal } from 'react-dom';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { 
@@ -65,9 +65,111 @@ function cn(...inputs: ClassValue[]) {
 const Logo = ({ className, dark = false }: { className?: string, dark?: boolean }) => (
   <div className={cn("logo-versus", className)}>
     <span className={cn("logo-versus-clinica", dark && "text-white/60")}>Clínica</span>
-    <span className={cn("logo-versus-main", dark && "text-white")}>versus</span>
+    <span className={cn("logo-versus-main", dark && "text-white")}>VERSUS</span>
   </div>
 );
+
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId: string | undefined;
+    email: string | null | undefined;
+    emailVerified: boolean | undefined;
+    isAnonymous: boolean | undefined;
+    tenantId: string | null | undefined;
+    providerInfo: {
+      providerId: string;
+      displayName: string | null;
+      email: string | null;
+      photoUrl: string | null;
+    }[];
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData.map(provider => ({
+        providerId: provider.providerId,
+        displayName: provider.displayName,
+        email: provider.email,
+        photoUrl: provider.photoURL
+      })) || []
+    },
+    operationType,
+    path
+  }
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
+
+export class ErrorBoundary extends Component<{ children: React.ReactNode }, { hasError: boolean, error: Error | null }> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error("ErrorBoundary caught an error", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      let errorMessage = "Ocorreu um erro inesperado.";
+      try {
+        const parsed = JSON.parse(this.state.error?.message || "");
+        if (parsed.error && parsed.operationType) {
+          errorMessage = `Erro de permissão no Firestore (${parsed.operationType}): ${parsed.error}`;
+        }
+      } catch (e) {
+        // Not a JSON error
+      }
+
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950 p-4">
+          <div className="max-w-md w-full bg-white dark:bg-slate-900 rounded-3xl p-8 shadow-2xl border border-slate-200 dark:border-slate-800 text-center">
+            <div className="w-16 h-16 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded-full flex items-center justify-center mx-auto mb-6">
+              <X size={32} />
+            </div>
+            <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-4">Ops! Algo deu errado</h2>
+            <p className="text-slate-600 dark:text-slate-400 mb-8">
+              {errorMessage}
+            </p>
+            <button
+              onClick={() => window.location.reload()}
+              className="w-full py-4 bg-versus text-white rounded-2xl font-semibold hover:opacity-90 transition-all shadow-lg shadow-versus/20"
+            >
+              Recarregar Aplicativo
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -139,50 +241,86 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // Initialize Sectors (Admin only)
+  // Initialize Sectors and Bootstrap Boards
   useEffect(() => {
-    if (isAdmin && user && isAuthReady && boards.length > 0 && !isInitializingRef.current) {
-      const sectors = ['Comercial', 'Staff', 'Recepção', 'Enfermagem'];
-      const colors = [
-        'bg-gradient-to-br from-amber-500 to-orange-600',
-        'bg-gradient-to-br from-blue-500 to-indigo-600',
-        'bg-gradient-to-br from-emerald-500 to-teal-600',
-        'bg-gradient-to-br from-rose-500 to-pink-600'
+    const initializeApp = async () => {
+      if (!isAuthReady || !user || loadingBoards || isInitializingRef.current) return;
+
+      const defaultSectors = [
+        { name: 'Comercial', background: 'bg-gradient-to-br from-amber-500 to-orange-600' },
+        { name: 'Staff', background: 'bg-gradient-to-br from-blue-500 to-indigo-600' },
+        { name: 'Gerencia', background: 'bg-slate-800' },
+        { name: 'Enfermagem', background: 'bg-gradient-to-br from-emerald-500 to-teal-600' },
+        { name: 'Tec Enf.', background: 'bg-teal-500' },
+        { name: 'Recepção', background: 'bg-gradient-to-br from-rose-500 to-pink-600' }
       ];
 
-      const missingSectors = sectors.filter(s => !boards.some(b => b.name === s));
-      
-      if (missingSectors.length > 0) {
-        isInitializingRef.current = true;
-        missingSectors.forEach(async (sector) => {
-          const index = sectors.indexOf(sector);
-          const boardRef = await addDoc(collection(db, 'boards'), {
-            name: sector,
-            ownerId: user.uid,
-            members: [user.uid],
-            background: colors[index],
-            createdAt: Timestamp.now()
-          });
+      // Only admins get all sectors automatically if they are missing
+      // Regular users only get them if they have 0 boards
+      const shouldBootstrap = isAdmin || boards.length === 0;
 
-          // Add default lists
-          const defaultLists = ['A fazer', 'Em andamento', 'Concluído'];
-          for (let i = 0; i < defaultLists.length; i++) {
-            await addDoc(collection(db, `boards/${boardRef.id}/lists`), {
-              name: defaultLists[i],
-              boardId: boardRef.id,
-              order: i,
-              createdAt: Timestamp.now()
-            });
+      if (!shouldBootstrap) return;
+
+      const sectorsToCreate = isAdmin 
+        ? defaultSectors.filter(s => !boards.some(b => b.name === s.name))
+        : (boards.length === 0 ? defaultSectors : []);
+
+      if (sectorsToCreate.length > 0) {
+        console.log('Starting initialization for user:', user.uid, 'Sectors to create:', sectorsToCreate.map(s => s.name));
+        isInitializingRef.current = true;
+        
+        try {
+          for (const sector of sectorsToCreate) {
+            // Double check if board already exists in Firestore to prevent duplicates across sessions
+            const q = query(collection(db, 'boards'), where('name', '==', sector.name), where('ownerId', '==', user.uid));
+            const existing = await getDocs(q).catch(err => handleFirestoreError(err, OperationType.GET, 'boards'));
+            
+            if (existing && existing.empty) {
+              console.log(`Creating board: ${sector.name}`);
+              const boardRef = await addDoc(collection(db, 'boards'), {
+                name: sector.name,
+                ownerId: user.uid,
+                members: [user.uid],
+                background: sector.background,
+                createdAt: serverTimestamp()
+              }).catch(err => handleFirestoreError(err, OperationType.CREATE, 'boards'));
+
+              if (boardRef) {
+                // Add default lists
+                const defaultLists = ['DEMANDAS', 'EM ANDAMENTO', 'FINALIZADAS'];
+                for (let i = 0; i < defaultLists.length; i++) {
+                  await addDoc(collection(db, `boards/${boardRef.id}/lists`), {
+                    name: defaultLists[i],
+                    boardId: boardRef.id,
+                    order: i,
+                    createdAt: serverTimestamp()
+                  }).catch(err => handleFirestoreError(err, OperationType.CREATE, `boards/${boardRef.id}/lists`));
+                }
+              }
+            } else {
+              console.log(`Board ${sector.name} already exists, skipping.`);
+            }
           }
-        });
+        } catch (error: any) {
+          console.error('Error during initialization:', error);
+          // The error was already handled and re-thrown by handleFirestoreError
+          // ErrorBoundary will catch it if it's not caught here.
+          throw error;
+        } finally {
+          // We don't reset isInitializingRef.current to false immediately to prevent re-runs in the same session
+          // unless the component unmounts and remounts.
+        }
       }
-    }
-  }, [isAdmin, user, boards, isAuthReady]);
+    };
+
+    initializeApp();
+  }, [isAdmin, user, boards, isAuthReady, loadingBoards]);
 
   // Cleanup Duplicates (Admin only)
   useEffect(() => {
     if (isAdmin && user && isAuthReady && boards.length > 1 && !hasCleanedUpRef.current) {
       const cleanup = async () => {
+        console.log('Checking for duplicate boards...');
         const nameGroups: { [key: string]: Board[] } = {};
         boards.forEach(b => {
           if (!nameGroups[b.name]) nameGroups[b.name] = [];
@@ -194,8 +332,13 @@ export default function App() {
           const group = nameGroups[name];
           if (group.length > 1) {
             cleaned = true;
+            console.log(`Found ${group.length} duplicates for board: ${name}. Cleaning up...`);
             // Sort by createdAt (oldest first)
-            group.sort((a, b) => a.createdAt.toMillis() - b.createdAt.toMillis());
+            group.sort((a, b) => {
+              const timeA = a.createdAt?.toMillis?.() || 0;
+              const timeB = b.createdAt?.toMillis?.() || 0;
+              return timeA - timeB;
+            });
             const toKeep = group[0];
             const toDelete = group.slice(1);
 
@@ -206,8 +349,9 @@ export default function App() {
           }
         }
         if (cleaned) {
-          hasCleanedUpRef.current = true;
+          console.log('Cleanup complete.');
         }
+        hasCleanedUpRef.current = true;
       };
       cleanup();
     }
@@ -257,12 +401,12 @@ export default function App() {
       setBoards(boardsData);
       setLoadingBoards(false);
     }, (error) => {
-      console.error('Firestore Error (Boards):', error);
+      handleFirestoreError(error, OperationType.GET, 'boards');
       setLoadingBoards(false);
     });
 
     return () => unsubscribe();
-  }, [user, isAuthReady]);
+  }, [user, isAuthReady, isAdmin]);
 
   // Lists & Cards Listener
   useEffect(() => {
@@ -448,42 +592,8 @@ export default function App() {
     setNewCardIsRecurrent(false);
   };
 
-  // Bootstrap default boards if none exist
-  useEffect(() => {
-    const bootstrapBoards = async () => {
-      console.log('Bootstrap check:', { isAuthReady, user: !!user, loadingBoards, boardsCount: boards.length });
-      if (isAuthReady && user && !loadingBoards && boards.length === 0) {
-        console.log('Starting bootstrap for user:', user.uid);
-        const defaultBoards = [
-          { name: 'Comercial', background: 'bg-blue-500' },
-          { name: 'Staff', background: 'bg-purple-500' },
-          { name: 'Gerencia', background: 'bg-slate-800' },
-          { name: 'Enfermagem', background: 'bg-emerald-500' },
-          { name: 'Tec Enf.', background: 'bg-teal-500' },
-          { name: 'Recepção', background: 'bg-amber-500' }
-        ];
-
-        try {
-          for (const board of defaultBoards) {
-            await addDoc(collection(db, 'boards'), {
-              ...board,
-              ownerId: user.uid,
-              members: [user.uid],
-              createdAt: serverTimestamp()
-            });
-          }
-        } catch (error: any) {
-          console.error('Error bootstrapping boards:', error);
-          // If it's a permission error, it might be because the user is not an admin
-          // but we allowed create for isAuthenticated, so this shouldn't happen
-          // unless the rules haven't propagated yet.
-        }
-      }
-    };
-
-    bootstrapBoards();
-  }, [isAuthReady, user, loadingBoards, boards.length]);
-
+  // Removed old bootstrapBoards effect in favor of consolidated initializeApp logic
+  
   const handleSignIn = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (isSigningIn) return;
