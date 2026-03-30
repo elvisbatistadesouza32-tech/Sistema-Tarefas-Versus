@@ -221,6 +221,19 @@ const CalendarView = ({ cards, onCardClick, onDayClick }: { cards: Card[], onCar
   const nextMonth = () => setCurrentDate(new Date(year, month + 1, 1));
   const prevMonth = () => setCurrentDate(new Date(year, month - 1, 1));
 
+  // Optimization: Group cards by date string for O(1) lookup during render
+  const groupedCards = useMemo(() => {
+    const groups: Record<string, Card[]> = {};
+    cards.forEach(card => {
+      if (card.dueDate) {
+        const dateStr = card.dueDate.toDate().toDateString();
+        if (!groups[dateStr]) groups[dateStr] = [];
+        groups[dateStr].push(card);
+      }
+    });
+    return groups;
+  }, [cards]);
+
   return (
     <div className="h-full flex flex-col bg-white/90 dark:bg-slate-900/90 backdrop-blur-md rounded-3xl shadow-2xl border border-white/20 dark:border-slate-800/50 overflow-hidden">
       <div className="p-6 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
@@ -253,14 +266,7 @@ const CalendarView = ({ cards, onCardClick, onDayClick }: { cards: Card[], onCar
           </div>
         ))}
         {days.map((d, i) => {
-          const dayCards = cards.filter(card => {
-            if (!card.dueDate) return false;
-            const cardDate = card.dueDate.toDate();
-            return cardDate.getDate() === d.day && 
-                   cardDate.getMonth() === d.date.getMonth() && 
-                   cardDate.getFullYear() === d.date.getFullYear();
-          });
-          
+          const dayCards = groupedCards[d.date.toDateString()] || [];
           const isToday = new Date().toDateString() === d.date.toDateString();
           
           return (
@@ -347,6 +353,7 @@ export default function App() {
   const [listToDeleteId, setListToDeleteId] = useState<string | null>(null);
   const [cardToDeleteId, setCardToDeleteId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'board' | 'calendar'>('board');
+  const [boardDateFilter, setBoardDateFilter] = useState<string>('all');
   const [newCardDueDate, setNewCardDueDate] = useState<string>('');
   const [reminders, setReminders] = useState<Card[]>([]);
   const [showRemindersModal, setShowRemindersModal] = useState(false);
@@ -668,6 +675,34 @@ export default function App() {
     return board;
   }, [boards, activeBoardId]);
 
+  // Optimization: Pre-group and filter cards by list for O(L) render performance
+  const cardsByList = useMemo(() => {
+    const groups: Record<string, Card[]> = {};
+    lists.forEach(l => groups[l.id] = []);
+    
+    cards.forEach(card => {
+      if (!groups[card.listId]) groups[card.listId] = [];
+      
+      let shouldInclude = true;
+      if (boardDateFilter !== 'all' && card.dueDate) {
+        const cardDate = card.dueDate.toDate();
+        const cardDateStr = `${cardDate.getFullYear()}-${String(cardDate.getMonth() + 1).padStart(2, '0')}-${String(cardDate.getDate()).padStart(2, '0')}`;
+        shouldInclude = cardDateStr === boardDateFilter;
+      }
+      
+      if (shouldInclude) {
+        groups[card.listId].push(card);
+      }
+    });
+    
+    // Sort each list's cards by order
+    Object.keys(groups).forEach(listId => {
+      groups[listId].sort((a, b) => a.order - b.order);
+    });
+    
+    return groups;
+  }, [cards, lists, boardDateFilter]);
+
   // Reset activeBoardId if it's set but the board doesn't exist in the loaded list 
   // after loading is complete (only for admins, as department users might be waiting for initialization)
   useEffect(() => {
@@ -834,7 +869,10 @@ export default function App() {
     };
     
     if (dueDate) {
-      cardData.dueDate = Timestamp.fromDate(new Date(dueDate));
+      // Parse as local date at noon to avoid timezone shifts
+      const [year, month, day] = dueDate.split('-').map(Number);
+      const localDate = new Date(year, month - 1, day, 12, 0, 0);
+      cardData.dueDate = Timestamp.fromDate(localDate);
     }
 
     await addDoc(collection(db, `boards/${activeBoardId}/cards`), cardData);
@@ -1506,6 +1544,29 @@ export default function App() {
             </button>
           </div>
 
+          {viewMode === 'board' && (
+            <div className="flex items-center gap-1 bg-white/10 p-1 rounded-lg ml-2">
+              <button 
+                onClick={() => setBoardDateFilter('all')}
+                className={cn(
+                  "px-3 py-1 rounded-md text-xs font-bold transition-all",
+                  boardDateFilter === 'all' ? "bg-white text-slate-900 shadow-sm" : "text-white/60 hover:text-white"
+                )}
+              >
+                Todas
+              </button>
+              <button 
+                onClick={() => setBoardDateFilter(new Date().toISOString().split('T')[0])}
+                className={cn(
+                  "px-3 py-1 rounded-md text-xs font-bold transition-all",
+                  boardDateFilter !== 'all' ? "bg-white text-slate-900 shadow-sm" : "text-white/60 hover:text-white"
+                )}
+              >
+                Hoje
+              </button>
+            </div>
+          )}
+
           <button className="text-white/60 hover:text-white p-1.5 rounded-md hover:bg-white/10">
             <Settings className="w-4 h-4" />
           </button>
@@ -1585,7 +1646,7 @@ export default function App() {
                         >
                           {list.name}
                           <span className="text-[10px] bg-slate-200 dark:bg-slate-800 px-1.5 py-0.5 rounded-full text-slate-500 font-medium">
-                            {cards.filter(c => c.listId === list.id).length}
+                            {(cardsByList[list.id] || []).length}
                           </span>
                         </h3>
                         <button 
@@ -1618,9 +1679,7 @@ export default function App() {
                   </div>
 
                   <div className="flex-1 overflow-y-auto px-2 pb-2 custom-scrollbar min-h-[50px]">
-                    {cards
-                      .filter(c => c.listId === list.id)
-                      .sort((a, b) => a.order - b.order)
+                    {(cardsByList[list.id] || [])
                       .map((card) => (
                         <div
                           key={card.id}
