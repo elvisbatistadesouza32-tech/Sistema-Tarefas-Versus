@@ -1547,7 +1547,7 @@ export default function App() {
                 >
                   <div className="p-5 flex items-center justify-between group">
                     {editingListId === list.id ? (
-                      <div className="flex-1 flex items-center gap-2">
+                      <div className="flex-1 flex items-center gap-2 px-2">
                         <input
                           autoFocus
                           type="text"
@@ -1558,8 +1558,19 @@ export default function App() {
                             if (e.key === 'Escape') setEditingListId(null);
                           }}
                           onBlur={() => renameList(list.id, editingListName)}
-                          className="w-full bg-white dark:bg-slate-800 border-none rounded-md p-1 text-sm font-bold outline-none ring-2 ring-blue-500"
+                          className="flex-1 bg-white dark:bg-slate-800 border-none rounded-md p-1 text-sm font-bold outline-none ring-2 ring-blue-500"
                         />
+                        <button 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setListToDeleteId(list.id);
+                            setEditingListId(null);
+                          }}
+                          className="p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-lg transition-colors"
+                          title="Excluir Lista"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       </div>
                     ) : (
                       <>
@@ -1571,8 +1582,14 @@ export default function App() {
                         </h3>
                         <button 
                           onClick={(e) => {
+                            e.stopPropagation();
                             const rect = e.currentTarget.getBoundingClientRect();
-                            setListMenuPos({ top: rect.top + rect.height, left: rect.left });
+                            let left = rect.left;
+                            // Se o menu for sair da tela à direita, ajusta para a esquerda
+                            if (left + 192 > window.innerWidth) {
+                              left = window.innerWidth - 192 - 16;
+                            }
+                            setListMenuPos({ top: rect.top + rect.height, left: left });
                             setListMenuId(list.id);
                           }}
                           className="p-1 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-md transition-colors"
@@ -2122,10 +2139,13 @@ export default function App() {
                   <span>Renomear</span>
                 </button>
                 <button
-                  onClick={() => setListToDeleteId(listMenuId)}
+                  onClick={() => {
+                    setListToDeleteId(listMenuId);
+                    setListMenuId(null);
+                  }}
                   className="w-full text-left px-3 py-2 text-sm text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-lg transition-colors flex items-center gap-2"
                 >
-                  <X className="w-4 h-4" />
+                  <Trash2 className="w-4 h-4" />
                   <span>Excluir Lista</span>
                 </button>
               </div>
