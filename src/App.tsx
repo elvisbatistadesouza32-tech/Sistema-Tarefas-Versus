@@ -345,6 +345,7 @@ export default function App() {
   const [editingListId, setEditingListId] = useState<string | null>(null);
   const [editingListName, setEditingListName] = useState('');
   const [listToDeleteId, setListToDeleteId] = useState<string | null>(null);
+  const [cardToDeleteId, setCardToDeleteId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'board' | 'calendar'>('board');
   const [newCardDueDate, setNewCardDueDate] = useState<string>('');
   const [reminders, setReminders] = useState<Card[]>([]);
@@ -848,6 +849,7 @@ export default function App() {
     if (!activeBoardId) return;
     try {
       await deleteDoc(doc(db, `boards/${activeBoardId}/cards`, cardId));
+      setCardToDeleteId(null);
       setMovingCardId(null);
     } catch (error) {
       console.error("Error deleting card:", error);
@@ -1545,7 +1547,7 @@ export default function App() {
                   key={list.id}
                   className="w-[85vw] sm:w-80 bg-slate-100/90 dark:bg-slate-900/90 backdrop-blur-md rounded-[2rem] flex flex-col max-h-full shrink-0 shadow-xl border border-white/20 dark:border-slate-800/50 transition-all duration-300 snap-center"
                 >
-                  <div className="p-5 flex items-center justify-between group">
+                  <div className="p-5 flex items-center justify-between group relative z-10">
                     {editingListId === list.id ? (
                       <div className="flex-1 flex items-center gap-2 px-2">
                         <input
@@ -1569,12 +1571,18 @@ export default function App() {
                           className="p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-lg transition-colors"
                           title="Excluir Lista"
                         >
-                          <Trash2 className="w-4 h-4" />
+                          <Trash2 className="w-5 h-5" />
                         </button>
                       </div>
                     ) : (
                       <>
-                        <h3 className="font-bold text-slate-700 dark:text-slate-200 text-sm px-2 flex items-center gap-2">
+                        <h3 
+                          onClick={() => {
+                            setEditingListId(list.id);
+                            setEditingListName(list.name);
+                          }}
+                          className="font-bold text-slate-700 dark:text-slate-200 text-sm px-2 flex items-center gap-2 cursor-pointer hover:text-versus transition-colors flex-1"
+                        >
                           {list.name}
                           <span className="text-[10px] bg-slate-200 dark:bg-slate-800 px-1.5 py-0.5 rounded-full text-slate-500 font-medium">
                             {cards.filter(c => c.listId === list.id).length}
@@ -1585,16 +1593,25 @@ export default function App() {
                             e.stopPropagation();
                             const rect = e.currentTarget.getBoundingClientRect();
                             let left = rect.left;
-                            // Se o menu for sair da tela à direita, ajusta para a esquerda
+                            let top = rect.top + rect.height;
+                            
+                            // Ajuste horizontal
                             if (left + 192 > window.innerWidth) {
                               left = window.innerWidth - 192 - 16;
                             }
-                            setListMenuPos({ top: rect.top + rect.height, left: left });
+                            
+                            // Ajuste vertical (se o menu for sair da tela embaixo)
+                            if (top + 120 > window.innerHeight) {
+                              top = rect.top - 120 - 8;
+                            }
+
+                            setListMenuPos({ top: top, left: left });
                             setListMenuId(list.id);
                           }}
-                          className="p-1 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-md transition-colors"
+                          className="p-3 -mr-2 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-full transition-colors"
+                          title="Opções da Lista"
                         >
-                          <MoreHorizontal className="w-4 h-4 text-slate-400 group-hover:text-slate-600 transition-colors" />
+                          <MoreHorizontal className="w-5 h-5 text-slate-500 dark:text-slate-400 group-hover:text-slate-700 dark:group-hover:text-slate-200 transition-colors" />
                         </button>
                       </>
                     )}
@@ -1629,26 +1646,22 @@ export default function App() {
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  if (window.confirm('Excluir esta tarefa?')) {
-                                    deleteCard(card.id);
-                                  }
+                                  setCardToDeleteId(card.id);
                                 }}
                                 className="p-1.5 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-lg text-slate-300 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all md:block hidden"
                                 title="Excluir tarefa"
                               >
-                                <Trash2 className="w-4 h-4" />
+                                <Trash2 className="w-5 h-5" />
                               </button>
                               {/* Mobile Delete Icon - Always visible on small screens */}
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  if (window.confirm('Excluir esta tarefa?')) {
-                                    deleteCard(card.id);
-                                  }
+                                  setCardToDeleteId(card.id);
                                 }}
                                 className="p-1.5 bg-rose-50 dark:bg-rose-900/20 rounded-lg text-rose-500 md:hidden block"
                               >
-                                <Trash2 className="w-4 h-4" />
+                                <Trash2 className="w-5 h-5" />
                               </button>
                               <div
                                 className="p-1.5 bg-slate-50 dark:bg-slate-700/50 rounded-lg text-slate-400 group-hover:text-blue-500 transition-colors"
@@ -2116,14 +2129,14 @@ export default function App() {
               exit={{ opacity: 0, scale: 0.95, y: -10 }}
               style={{
                 position: 'fixed',
-                top: listMenuPos.top + 8,
+                top: listMenuPos.top + 4,
                 left: listMenuPos.left,
                 zIndex: 101
               }}
               className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 overflow-hidden w-48"
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="p-2 space-y-1">
+              <div className="p-3 space-y-2">
                 <button
                   onClick={() => {
                     const list = lists.find(l => l.id === listMenuId);
@@ -2133,20 +2146,22 @@ export default function App() {
                     }
                     setListMenuId(null);
                   }}
-                  className="w-full text-left px-3 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-lg transition-colors flex items-center gap-2"
+                  className="w-full text-left px-4 py-3 text-base sm:text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl transition-colors flex items-center gap-3"
                 >
-                  <Repeat className="w-4 h-4" />
-                  <span>Renomear</span>
+                  <Repeat className="w-5 h-5 sm:w-4 sm:h-4" />
+                  <span>Renomear Lista</span>
                 </button>
                 <button
                   onClick={() => {
-                    setListToDeleteId(listMenuId);
-                    setListMenuId(null);
+                    if (listMenuId) {
+                      setListToDeleteId(listMenuId);
+                      setListMenuId(null);
+                    }
                   }}
-                  className="w-full text-left px-3 py-2 text-sm text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-lg transition-colors flex items-center gap-2"
+                  className="w-full text-left px-4 py-3 text-base sm:text-sm text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-xl transition-colors flex items-center gap-3"
                 >
-                  <Trash2 className="w-4 h-4" />
-                  <span>Excluir Lista</span>
+                  <Trash2 className="w-5 h-5 sm:w-4 sm:h-4" />
+                  <span className="font-bold">Excluir Lista</span>
                 </button>
               </div>
             </motion.div>
@@ -2189,6 +2204,50 @@ export default function App() {
                 </button>
                 <button
                   onClick={() => setListToDeleteId(null)}
+                  className="w-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold py-3 rounded-xl transition-all"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Delete Card Confirmation Modal */}
+      <AnimatePresence>
+        {cardToDeleteId && (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center p-6">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setCardToDeleteId(null)}
+              className="absolute inset-0 bg-slate-950/60 backdrop-blur-md"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white dark:bg-slate-900 rounded-[2rem] shadow-2xl border border-white dark:border-slate-800 overflow-hidden w-full max-w-sm relative z-10 p-8 text-center"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="w-16 h-16 bg-rose-50 dark:bg-rose-900/30 rounded-2xl flex items-center justify-center mx-auto mb-6 text-rose-600 dark:text-rose-400">
+                <Trash2 className="w-8 h-8" />
+              </div>
+              <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2">Excluir Tarefa?</h3>
+              <p className="text-slate-500 dark:text-slate-400 mb-8 text-sm">
+                Deseja realmente excluir a tarefa <strong>{cards.find(c => c.id === cardToDeleteId)?.title}</strong>?
+              </p>
+              <div className="flex flex-col gap-3">
+                <button
+                  onClick={() => deleteCard(cardToDeleteId)}
+                  className="w-full bg-rose-500 hover:bg-rose-600 text-white font-bold py-3 rounded-xl transition-all shadow-lg shadow-rose-500/20"
+                >
+                  Sim, Excluir
+                </button>
+                <button
+                  onClick={() => setCardToDeleteId(null)}
                   className="w-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold py-3 rounded-xl transition-all"
                 >
                   Cancelar
