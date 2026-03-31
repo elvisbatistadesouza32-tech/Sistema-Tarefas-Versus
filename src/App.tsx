@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, Component } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, Suspense, lazy } from 'react';
 import { createPortal } from 'react-dom';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { 
@@ -10,7 +10,6 @@ import {
   updateProfile,
   sendPasswordResetEmail,
   signInWithGoogle,
-  signInAnonymously
 } from './firebase';
 import { 
   collection, 
@@ -36,49 +35,35 @@ import {
   Search, 
   Moon, 
   Sun, 
-  MoreHorizontal, 
   X, 
-  Clock, 
-  CheckSquare, 
-  Paperclip, 
-  MessageSquare, 
-  User as UserIcon,
-  ChevronLeft,
-  ChevronRight,
   Settings,
   PlusCircle,
-  Trello,
   ArrowLeft,
-  Repeat,
   AlertCircle,
-  Zap,
   ArrowRightLeft,
   Calendar,
-  Trash2
+  Trash2,
+  ChevronLeft,
+  ChevronRight,
+  Repeat,
+  Zap,
+  Clock,
+  CheckSquare
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { Board, List, Card, UserProfile } from './types';
+import { Board, List, Card } from './types';
+import { DEFAULT_SECTORS, OperationType } from './constants';
+import { Logo } from './components/Logo';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { BoardList } from './components/BoardList';
+
+// Lazy load CalendarView for better initial load performance
+const CalendarView = lazy(() => import('./components/CalendarView').then(m => ({ default: m.CalendarView })));
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
-}
-
-const Logo = ({ className, dark = false }: { className?: string, dark?: boolean }) => (
-  <div className={cn("logo-versus", className)}>
-    <span className={cn("logo-versus-clinica", dark && "text-white/60")}>Clínica</span>
-    <span className={cn("logo-versus-main", dark && "text-white")}>VERSUS</span>
-  </div>
-);
-
-enum OperationType {
-  CREATE = 'create',
-  UPDATE = 'update',
-  DELETE = 'delete',
-  LIST = 'list',
-  GET = 'get',
-  WRITE = 'write',
 }
 
 interface FirestoreErrorInfo {
@@ -123,198 +108,6 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
   throw new Error(JSON.stringify(errInfo));
 }
 
-export class ErrorBoundary extends Component<{ children: React.ReactNode }, { hasError: boolean, error: Error | null }> {
-  constructor(props: { children: React.ReactNode }) {
-    super(props);
-    this.state = { hasError: false, error: null };
-  }
-
-  static getDerivedStateFromError(error: Error) {
-    return { hasError: true, error };
-  }
-
-  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
-    console.error("ErrorBoundary caught an error", error, errorInfo);
-  }
-
-  render() {
-    if (this.state.hasError) {
-      let errorMessage = "Ocorreu um erro inesperado.";
-      try {
-        const parsed = JSON.parse(this.state.error?.message || "");
-        if (parsed.error && parsed.operationType) {
-          errorMessage = `Erro de permissão no Firestore (${parsed.operationType}): ${parsed.error}`;
-        }
-      } catch (e) {
-        // Not a JSON error
-      }
-
-      return (
-        <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950 p-4">
-          <div className="max-w-md w-full bg-white dark:bg-slate-900 rounded-3xl p-8 shadow-2xl border border-slate-200 dark:border-slate-800 text-center">
-            <div className="w-16 h-16 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded-full flex items-center justify-center mx-auto mb-6">
-              <X size={32} />
-            </div>
-            <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-4">Ops! Algo deu errado</h2>
-            <p className="text-slate-600 dark:text-slate-400 mb-8">
-              {errorMessage}
-            </p>
-            <button
-              onClick={() => window.location.reload()}
-              className="w-full py-4 bg-versus text-white rounded-2xl font-semibold hover:opacity-90 transition-all shadow-lg shadow-versus/20"
-            >
-              Recarregar Aplicativo
-            </button>
-          </div>
-        </div>
-      );
-    }
-
-    return this.props.children;
-  }
-}
-
-const DEFAULT_SECTORS = [
-  { id: 'board_comercial', name: 'Comercial', background: 'bg-gradient-to-br from-sky-500 to-blue-700' },
-  { id: 'board_staff', name: 'Staff', background: 'bg-gradient-to-br from-fuchsia-600 to-purple-800' },
-  { id: 'board_gerencia', name: 'Gerencia', background: 'bg-slate-900' },
-  { id: 'board_enfermagem', name: 'Enfermagem', background: 'bg-gradient-to-br from-emerald-500 to-emerald-700' },
-  { id: 'board_tec_enf', name: 'Tec Enf.', background: 'bg-gradient-to-br from-cyan-600 to-cyan-800' },
-  { id: 'board_recepcao', name: 'Recepção', background: 'bg-gradient-to-br from-orange-500 to-orange-700' }
-];
-
-const CalendarView = ({ cards, onCardClick, onDayClick }: { cards: Card[], onCardClick: (card: Card) => void, onDayClick: (date: Date) => void }) => {
-  const [currentDate, setCurrentDate] = useState(new Date());
-  
-  const daysInMonth = (year: number, month: number) => new Date(year, month + 1, 0).getDate();
-  const firstDayOfMonth = (year: number, month: number) => new Date(year, month, 1).getDay();
-  
-  const year = currentDate.getFullYear();
-  const month = currentDate.getMonth();
-  
-  const days = [];
-  const totalDays = daysInMonth(year, month);
-  const startDay = firstDayOfMonth(year, month);
-  
-  // Previous month days
-  const prevMonthDays = daysInMonth(year, month - 1);
-  for (let i = startDay - 1; i >= 0; i--) {
-    days.push({ day: prevMonthDays - i, currentMonth: false, date: new Date(year, month - 1, prevMonthDays - i) });
-  }
-  
-  // Current month days
-  for (let i = 1; i <= totalDays; i++) {
-    days.push({ day: i, currentMonth: true, date: new Date(year, month, i) });
-  }
-  
-  // Next month days
-  const remainingDays = 42 - days.length;
-  for (let i = 1; i <= remainingDays; i++) {
-    days.push({ day: i, currentMonth: false, date: new Date(year, month + 1, i) });
-  }
-
-  const monthNames = [
-    "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
-    "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
-  ];
-
-  const nextMonth = () => setCurrentDate(new Date(year, month + 1, 1));
-  const prevMonth = () => setCurrentDate(new Date(year, month - 1, 1));
-
-  // Optimization: Group cards by date string for O(1) lookup during render
-  const groupedCards = useMemo(() => {
-    const groups: Record<string, Card[]> = {};
-    cards.forEach(card => {
-      if (card.dueDate) {
-        const dateStr = card.dueDate.toDate().toDateString();
-        if (!groups[dateStr]) groups[dateStr] = [];
-        groups[dateStr].push(card);
-      }
-    });
-    return groups;
-  }, [cards]);
-
-  return (
-    <div className="h-full flex flex-col bg-white/90 dark:bg-slate-900/90 backdrop-blur-md rounded-3xl shadow-2xl border border-white/20 dark:border-slate-800/50 overflow-hidden">
-      <div className="p-6 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <h2 className="text-2xl font-bold text-slate-900 dark:text-white">
-            {monthNames[month]} <span className="text-slate-400 font-medium">{year}</span>
-          </h2>
-          <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
-            <button onClick={prevMonth} className="p-2 hover:bg-white dark:hover:bg-slate-700 rounded-lg transition-all">
-              <ChevronLeft className="w-5 h-5 text-slate-600 dark:text-slate-300" />
-            </button>
-            <button onClick={nextMonth} className="p-2 hover:bg-white dark:hover:bg-slate-700 rounded-lg transition-all">
-              <ChevronLeft className="w-5 h-5 text-slate-600 dark:text-slate-300 rotate-180" />
-            </button>
-          </div>
-        </div>
-        <button 
-          onClick={() => setCurrentDate(new Date())}
-          className="px-4 py-2 bg-versus text-white text-sm font-bold rounded-xl hover:bg-versus/90 transition-all active:scale-95"
-        >
-          Hoje
-        </button>
-      </div>
-      
-      <div className="flex-1 overflow-auto custom-scrollbar">
-        <div className="min-w-[800px] h-full grid grid-cols-7 grid-rows-6">
-          {["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"].map(day => (
-          <div key={day} className="p-4 text-center text-xs font-bold text-slate-400 uppercase tracking-wider border-b border-slate-100 dark:border-slate-800">
-            {day}
-          </div>
-        ))}
-        {days.map((d, i) => {
-          const dayCards = groupedCards[d.date.toDateString()] || [];
-          const isToday = new Date().toDateString() === d.date.toDateString();
-          
-          return (
-            <div 
-              key={i} 
-              onClick={() => onDayClick(d.date)}
-              className={cn(
-                "p-2 border-r border-b border-slate-100 dark:border-slate-800 flex flex-col gap-1 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer group/day",
-                !d.currentMonth && "bg-slate-50/50 dark:bg-slate-950/20 opacity-40",
-                i % 7 === 6 && "border-r-0"
-              )}
-            >
-              <div className="flex items-center justify-between mb-1">
-                <span className={cn(
-                  "text-xs font-bold w-6 h-6 flex items-center justify-center rounded-full",
-                  isToday ? "bg-versus text-white shadow-lg shadow-versus/30" : "text-slate-500 dark:text-slate-400"
-                )}>
-                  {d.day}
-                </span>
-                <Plus className="w-3 h-3 text-slate-300 opacity-0 group-hover/day:opacity-100 transition-opacity" />
-              </div>
-              <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-1">
-                {dayCards.map(card => (
-                  <div 
-                    key={card.id}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onCardClick(card);
-                    }}
-                    className={cn(
-                      "text-[10px] p-1.5 rounded-lg border shadow-sm cursor-pointer transition-all hover:scale-105",
-                      card.urgency === 'high' ? "bg-rose-50 border-rose-100 text-rose-700" :
-                      card.urgency === 'medium' ? "bg-amber-50 border-amber-100 text-amber-700" :
-                      "bg-blue-50 border-blue-100 text-blue-700"
-                    )}
-                  >
-                    <div className="font-bold truncate">{card.title}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          );
-        })}
-        </div>
-      </div>
-    </div>
-  );
-};
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -712,7 +505,7 @@ export default function App() {
     }
   }, [activeBoardId, loadingBoards, boards, activeBoard, isAdmin]);
 
-  const moveCardToList = async (cardId: string, targetListId: string) => {
+  const moveCardToList = useCallback(async (cardId: string, targetListId: string) => {
     if (!activeBoardId) return;
     
     const draggedCard = cards.find(c => c.id === cardId);
@@ -762,7 +555,7 @@ export default function App() {
     } catch (error) {
       console.error("Error moving card:", error);
     }
-  };
+  }, [activeBoardId, cards]);
 
   const createBoard = async (name: string) => {
     if (!user) return;
@@ -816,7 +609,7 @@ export default function App() {
     setNewListName('');
   };
 
-  const renameList = async (listId: string, newName: string) => {
+  const renameList = useCallback(async (listId: string, newName: string) => {
     if (!activeBoardId || !newName.trim()) return;
     try {
       const listRef = doc(db, `boards/${activeBoardId}/lists`, listId);
@@ -826,7 +619,7 @@ export default function App() {
     } catch (error) {
       console.error("Error renaming list:", error);
     }
-  };
+  }, [activeBoardId]);
 
   const deleteList = async (listId: string) => {
     if (!activeBoardId) return;
@@ -851,7 +644,7 @@ export default function App() {
     }
   };
 
-  const addCard = async (listId: string, title: string, urgency: 'low' | 'medium' | 'high' = 'low', isRecurrent: boolean = false, dueDate?: string) => {
+  const addCard = useCallback(async (listId: string, title: string, urgency: 'low' | 'medium' | 'high' = 'low', isRecurrent: boolean = false, dueDate?: string) => {
     if (!activeBoardId) return;
     const listCards = cards.filter(c => c.listId === listId);
     const cardData: any = {
@@ -881,9 +674,9 @@ export default function App() {
     setNewCardUrgency('low');
     setNewCardIsRecurrent(false);
     setNewCardDueDate('');
-  };
+  }, [activeBoardId, cards]);
 
-  const deleteCard = async (cardId: string) => {
+  const deleteCard = useCallback(async (cardId: string) => {
     if (!activeBoardId) return;
     try {
       await deleteDoc(doc(db, `boards/${activeBoardId}/cards`, cardId));
@@ -892,7 +685,7 @@ export default function App() {
     } catch (error) {
       console.error("Error deleting card:", error);
     }
-  };
+  }, [activeBoardId]);
 
   // Reset reminder visibility when switching boards
   useEffect(() => {
@@ -1604,264 +1397,32 @@ export default function App() {
               className="h-full flex gap-4 md:gap-6 items-start"
             >
               {lists.map((list) => (
-                <div
+                <BoardList
                   key={list.id}
-                  className="w-[85vw] sm:w-80 bg-slate-100/90 dark:bg-slate-900/90 backdrop-blur-md rounded-[2rem] flex flex-col max-h-full shrink-0 shadow-xl border border-white/20 dark:border-slate-800/50 transition-all duration-300 snap-center"
-                >
-                  <div className="p-5 flex items-center justify-between group relative z-10">
-                    {editingListId === list.id ? (
-                      <div className="flex-1 flex items-center gap-2 px-2">
-                        <input
-                          autoFocus
-                          type="text"
-                          value={editingListName}
-                          onChange={(e) => setEditingListName(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') renameList(list.id, editingListName);
-                            if (e.key === 'Escape') setEditingListId(null);
-                          }}
-                          onBlur={() => renameList(list.id, editingListName)}
-                          className="flex-1 bg-white dark:bg-slate-800 border-none rounded-md p-1 text-sm font-bold outline-none ring-2 ring-blue-500"
-                        />
-                        <button 
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setListToDeleteId(list.id);
-                            setEditingListId(null);
-                          }}
-                          className="p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-lg transition-colors"
-                          title="Excluir Lista"
-                        >
-                          <Trash2 className="w-5 h-5" />
-                        </button>
-                      </div>
-                    ) : (
-                      <>
-                        <h3 
-                          onClick={() => {
-                            setEditingListId(list.id);
-                            setEditingListName(list.name);
-                          }}
-                          className="font-bold text-slate-700 dark:text-slate-200 text-sm px-2 flex items-center gap-2 cursor-pointer hover:text-versus transition-colors flex-1"
-                        >
-                          {list.name}
-                          <span className="text-[10px] bg-slate-200 dark:bg-slate-800 px-1.5 py-0.5 rounded-full text-slate-500 font-medium">
-                            {(cardsByList[list.id] || []).length}
-                          </span>
-                        </h3>
-                        <button 
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            const rect = e.currentTarget.getBoundingClientRect();
-                            let left = rect.left;
-                            let top = rect.top + rect.height;
-                            
-                            // Ajuste horizontal
-                            if (left + 192 > window.innerWidth) {
-                              left = window.innerWidth - 192 - 16;
-                            }
-                            
-                            // Ajuste vertical (se o menu for sair da tela embaixo)
-                            if (top + 120 > window.innerHeight) {
-                              top = rect.top - 120 - 8;
-                            }
-
-                            setListMenuPos({ top: top, left: left });
-                            setListMenuId(list.id);
-                          }}
-                          className="p-3 -mr-2 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-full transition-colors"
-                          title="Opções da Lista"
-                        >
-                          <MoreHorizontal className="w-5 h-5 text-slate-500 dark:text-slate-400 group-hover:text-slate-700 dark:group-hover:text-slate-200 transition-colors" />
-                        </button>
-                      </>
-                    )}
-                  </div>
-
-                  <div className="flex-1 overflow-y-auto px-2 pb-2 custom-scrollbar min-h-[50px]">
-                    {(cardsByList[list.id] || [])
-                      .map((card) => (
-                        <div
-                          key={card.id}
-                          onClick={() => setMovingCardId(card.id)}
-                          className="bg-white dark:bg-slate-800 p-4 rounded-2xl shadow-sm mb-3 border border-slate-200 dark:border-slate-700 hover:border-blue-500 group select-none relative hover:shadow-md transition-all duration-200 cursor-pointer active:scale-[0.98]"
-                        >
-                          {card.labels.length > 0 && (
-                            <div className="flex flex-wrap gap-1.5 mb-2.5">
-                              {card.labels.map(label => (
-                                <div key={label.id} className={cn("h-2 w-10 rounded-full", label.color)}></div>
-                              ))}
-                            </div>
-                          )}
-                          {card.urgency && card.urgency !== 'low' && (
-                            <div className={cn(
-                              "h-1.5 w-14 rounded-full mb-2.5",
-                              card.urgency === 'high' ? "bg-rose-500" : "bg-amber-500"
-                            )}></div>
-                          )}
-                          <div className="flex items-center justify-between mb-3">
-                            <h4 className="text-base font-bold text-slate-900 dark:text-white pr-8 leading-tight">{card.title}</h4>
-                            <div className="absolute top-4 right-4 flex items-center gap-2">
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setCardToDeleteId(card.id);
-                                }}
-                                className="p-1.5 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-lg text-slate-300 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all md:block hidden"
-                                title="Excluir tarefa"
-                              >
-                                <Trash2 className="w-5 h-5" />
-                              </button>
-                              {/* Mobile Delete Icon - Always visible on small screens */}
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setCardToDeleteId(card.id);
-                                }}
-                                className="p-1.5 bg-rose-50 dark:bg-rose-900/20 rounded-lg text-rose-500 md:hidden block"
-                              >
-                                <Trash2 className="w-5 h-5" />
-                              </button>
-                              <div
-                                className="p-1.5 bg-slate-50 dark:bg-slate-700/50 rounded-lg text-slate-400 group-hover:text-blue-500 transition-colors"
-                                title="Mover tarefa"
-                              >
-                                <ArrowRightLeft className="w-4 h-4" />
-                              </div>
-                            </div>
-                          </div>
-                          
-                          <div className="flex items-center flex-wrap gap-3 text-slate-400">
-                            {card.isRecurrent && (
-                              <div className="flex items-center gap-1.5 text-[11px] font-bold text-blue-500 bg-blue-50 dark:bg-blue-900/20 px-2 py-0.5 rounded-full">
-                                <Repeat className="w-3.5 h-3.5" />
-                                <span>Recorrente</span>
-                              </div>
-                            )}
-                            {card.urgency === 'high' && (
-                              <div className="flex items-center gap-1.5 text-[11px] font-bold text-rose-500 bg-rose-50 dark:bg-rose-900/20 px-2 py-0.5 rounded-full">
-                                <Zap className="w-3.5 h-3.5 fill-rose-500" />
-                                <span>Urgente</span>
-                              </div>
-                            )}
-                            {card.checklist.length > 0 && (
-                              <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 bg-slate-100 dark:bg-slate-700 px-2 py-0.5 rounded-full">
-                                <CheckSquare className="w-3.5 h-3.5" />
-                                {card.checklist.filter(i => i.completed).length}/{card.checklist.length}
-                              </div>
-                            )}
-                            {card.dueDate && (
-                              <div className="flex items-center gap-1.5 text-[11px] font-bold text-rose-500 bg-rose-50 dark:bg-rose-900/20 px-2 py-0.5 rounded-full ml-auto">
-                                <Clock className="w-3.5 h-3.5" />
-                                {card.dueDate.toDate().toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                  </div>
-
-                  <div className="p-3">
-                    {addingCardToList === list.id ? (
-                      <div className="bg-white dark:bg-slate-800 p-4 rounded-2xl shadow-lg border border-slate-200 dark:border-slate-700 space-y-4">
-                        <input
-                          autoFocus
-                          type="text"
-                          placeholder="Título da tarefa..."
-                          value={newCardTitle}
-                          onChange={(e) => setNewCardTitle(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' && newCardTitle) {
-                              addCard(list.id, newCardTitle, newCardUrgency, newCardIsRecurrent, newCardDueDate);
-                            } else if (e.key === 'Escape') {
-                              setAddingCardToList(null);
-                            }
-                          }}
-                          className="w-full bg-slate-50 dark:bg-slate-900 border-none rounded-xl p-3 text-sm font-medium outline-none focus:ring-2 focus:ring-versus/50"
-                        />
-                        
-                        <div className="flex items-center gap-2 px-1">
-                          <Calendar className="w-4 h-4 text-slate-400" />
-                          <input 
-                            type="date"
-                            value={newCardDueDate}
-                            onChange={(e) => setNewCardDueDate(e.target.value)}
-                            className="bg-transparent text-xs font-bold outline-none border-none text-slate-500 dark:text-slate-400 cursor-pointer"
-                          />
-                        </div>
-
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-1">
-                            <button
-                              onClick={() => setNewCardUrgency('low')}
-                              className={cn(
-                                "px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all",
-                                newCardUrgency === 'low' ? "bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300" : "text-slate-400 hover:text-slate-600"
-                              )}
-                            >
-                              Baixa
-                            </button>
-                            <button
-                              onClick={() => setNewCardUrgency('medium')}
-                              className={cn(
-                                "px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all",
-                                newCardUrgency === 'medium' ? "bg-amber-100 text-amber-700" : "text-slate-400 hover:text-slate-600"
-                              )}
-                            >
-                              Média
-                            </button>
-                            <button
-                              onClick={() => setNewCardUrgency('high')}
-                              className={cn(
-                                "px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all",
-                                newCardUrgency === 'high' ? "bg-rose-100 text-rose-700" : "text-slate-400 hover:text-slate-600"
-                              )}
-                            >
-                              Alta
-                            </button>
-                          </div>
-
-                          <button
-                            onClick={() => setNewCardIsRecurrent(!newCardIsRecurrent)}
-                            className={cn(
-                              "p-2 rounded-xl transition-all flex items-center gap-2 text-[10px] font-black uppercase tracking-wider",
-                              newCardIsRecurrent ? "bg-blue-100 text-blue-700" : "text-slate-400 hover:text-slate-600"
-                            )}
-                            title="Tarefa Recorrente"
-                          >
-                            <Repeat className="w-4 h-4" />
-                            {newCardIsRecurrent && <span>Recorrente</span>}
-                          </button>
-                        </div>
-
-                        <div className="flex items-center gap-2 pt-2">
-                          <button
-                            onClick={() => {
-                              if (newCardTitle) addCard(list.id, newCardTitle, newCardUrgency, newCardIsRecurrent, newCardDueDate);
-                            }}
-                            className="flex-1 bg-versus text-white py-3 rounded-xl text-sm font-black shadow-xl shadow-versus/20 active:scale-95 transition-all"
-                          >
-                            Adicionar
-                          </button>
-                          <button
-                            onClick={() => setAddingCardToList(null)}
-                            className="p-3 text-slate-400 hover:text-rose-500 transition-colors"
-                          >
-                            <X className="w-5 h-5" />
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <button 
-                        onClick={() => setAddingCardToList(list.id)}
-                        className="w-full flex items-center justify-center gap-2 text-slate-500 dark:text-slate-400 bg-white/50 dark:bg-slate-800/50 hover:bg-white dark:hover:bg-slate-800 p-4 rounded-2xl text-sm font-bold transition-all border border-dashed border-slate-300 dark:border-slate-700 hover:border-blue-500"
-                      >
-                        <Plus className="w-5 h-5" />
-                        Adicionar um cartão
-                      </button>
-                    )}
-                  </div>
-                </div>
+                  list={list}
+                  cards={cardsByList[list.id] || []}
+                  editingListId={editingListId}
+                  editingListName={editingListName}
+                  setEditingListName={setEditingListName}
+                  setEditingListId={setEditingListId}
+                  renameList={renameList}
+                  setListToDeleteId={setListToDeleteId}
+                  setListMenuPos={setListMenuPos}
+                  setListMenuId={setListMenuId}
+                  addingCardToList={addingCardToList}
+                  setAddingCardToList={setAddingCardToList}
+                  newCardTitle={newCardTitle}
+                  setNewCardTitle={setNewCardTitle}
+                  newCardUrgency={newCardUrgency}
+                  setNewCardUrgency={setNewCardUrgency}
+                  newCardIsRecurrent={newCardIsRecurrent}
+                  setNewCardIsRecurrent={setNewCardIsRecurrent}
+                  newCardDueDate={newCardDueDate}
+                  setNewCardDueDate={setNewCardDueDate}
+                  addCard={addCard}
+                  onCardClick={setMovingCardId}
+                  onCardDelete={setCardToDeleteId}
+                />
               ))}
 
               {addingList ? (
@@ -1917,16 +1478,22 @@ export default function App() {
               transition={{ duration: 0.2 }}
               className="h-full"
             >
-              <CalendarView 
-                cards={cards} 
-                onCardClick={(card) => setMovingCardId(card.id)} 
-                onDayClick={(date) => {
-                  setCalendarSelectedDate(date);
-                  setNewCardDueDate(date.toISOString().split('T')[0]);
-                  if (lists.length > 0) setCalendarSelectedListId(lists[0].id);
-                  setShowCalendarAddModal(true);
-                }}
-              />
+              <Suspense fallback={
+                <div className="h-full flex items-center justify-center bg-white/50 dark:bg-slate-900/50 rounded-3xl">
+                  <div className="w-8 h-8 border-2 border-versus border-t-transparent rounded-full animate-spin"></div>
+                </div>
+              }>
+                <CalendarView 
+                  cards={cards} 
+                  onCardClick={(card) => setMovingCardId(card.id)} 
+                  onDayClick={(date) => {
+                    setCalendarSelectedDate(date);
+                    setNewCardDueDate(date.toISOString().split('T')[0]);
+                    if (lists.length > 0) setCalendarSelectedListId(lists[0].id);
+                    setShowCalendarAddModal(true);
+                  }}
+                />
+              </Suspense>
             </motion.div>
           )}
         </AnimatePresence>
