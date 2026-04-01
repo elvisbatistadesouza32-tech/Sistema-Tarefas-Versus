@@ -41,6 +41,7 @@ export interface Card {
   checklist: ChecklistItem[];
   createdAt: Timestamp;
   isRecurrent?: boolean;
+  lastResetAt?: Timestamp;
   urgency?: 'low' | 'medium' | 'high';
 }
 

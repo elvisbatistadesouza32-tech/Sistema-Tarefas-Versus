@@ -118,6 +118,7 @@ export default function App() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [boards, setBoards] = useState<Board[]>([]);
   const [loadingBoards, setLoadingBoards] = useState(true);
+  const [lastResetCheckDate, setLastResetCheckDate] = useState<string | null>(null);
   const [activeBoardId, setActiveBoardId] = useState<string | null>(null);
   const [lists, setLists] = useState<List[]>([]);
   const [cards, setCards] = useState<Card[]>([]);
@@ -712,6 +713,52 @@ export default function App() {
       setHasSeenRemindersToday(true);
     }
   }, [cards, hasSeenRemindersToday]);
+
+  // Reset recurrent tasks at midnight
+  useEffect(() => {
+    if (!activeBoardId || !cards.length || !lists.length || !user) return;
+
+    const today = new Date();
+    const todayStr = today.toDateString();
+
+    // Only run the check once per day/session locally to avoid redundant checks
+    if (lastResetCheckDate === todayStr) return;
+
+    const demandasList = lists.find(l => l.name.toUpperCase() === 'DEMANDAS');
+    if (!demandasList) return;
+
+    const batch = writeBatch(db);
+    let hasChanges = false;
+
+    cards.forEach(card => {
+      if (card.isRecurrent && card.listId !== demandasList.id) {
+        // Check if already reset today by looking at lastResetAt in Firestore
+        const lastReset = card.lastResetAt?.toDate();
+        const alreadyResetToday = lastReset && lastReset.toDateString() === todayStr;
+
+        if (!alreadyResetToday) {
+          const cardRef = doc(db, `boards/${activeBoardId}/cards`, card.id);
+          
+          // Reset checklist items to incomplete as they will be done again
+          const resetChecklist = (card.checklist || []).map(item => ({ ...item, completed: false }));
+          
+          batch.update(cardRef, {
+            listId: demandasList.id,
+            lastResetAt: serverTimestamp(),
+            checklist: resetChecklist,
+            order: 0 // Move to top of the list
+          });
+          hasChanges = true;
+        }
+      }
+    });
+
+    if (hasChanges) {
+      batch.commit().catch(err => console.error("Error resetting recurrent tasks:", err));
+    }
+
+    setLastResetCheckDate(todayStr);
+  }, [activeBoardId, cards, lists, user, lastResetCheckDate]);
 
   const handleLogOut = async () => {
     try {
